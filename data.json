@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "updatedAt": "2026-11-10T08:00:00.000Z",
+  "recipes": [
+    {
+      "id": "osfp-dr8__flavor-a__die-attach",
+      "product": "OSFP DR8",
+      "flavor": "Flavor A",
+      "stage": "Die Attach",
+      "stageOrder": 1,
+      "name": "SAMPLE - DSP die attach",
+      "rev": "A",
+      "status": "Draft",
+      "tools": [
+        {
+          "name": "Die bonder",
+          "setting": "Placeholder: Bonder-01",
+          "note": "Bond force / placement per recipe sheet"
+        },
+        {
+          "name": "Collet",
+          "setting": "Placeholder: size to die",
+          "note": "Inspect for wear before each lot"
+        }
+      ],
+      "epoxies": [
+        {
+          "name": "Die attach epoxy (placeholder)",
+          "pn": "EPO-0001",
+          "supplier": "Supplier X",
+          "mix": "Pre-mixed syringe",
+          "potLife": "24 h",
+          "storage": "-40 C, thaw 60 min"
+        }
+      ],
+      "jigs": [
+        {
+          "name": "Substrate carrier",
+          "id": "JIG-0001",
+          "note": "Placeholder fixture"
+        }
+      ],
+      "cure": {
+        "method": "Box oven",
+        "atmosphere": "Air",
+        "segments": [
+          {
+            "label": "Ramp to cure",
+            "temp": 150,
+            "min": 20
+          },
+          {
+            "label": "Hold",
+            "temp": 150,
+            "min": 60
+          },
+          {
+            "label": "Cool down",
+            "temp": 25,
+            "min": 30
+          }
+        ]
+      },
+      "steps": [
+        "Thaw epoxy syringe to room temperature.",
+        "Load substrate on carrier jig.",
+        "Dispense epoxy pattern and place die.",
+        "Inspect fillet, then load to oven."
+      ],
+      "notes": "SAMPLE DATA - replace with the released recipe.",
+      "updatedAt": "2026-11-10T08:00:00.000Z"
+    },
+    {
+      "id": "osfp-dr8__flavor-a__wire-bond",
+      "product": "OSFP DR8",
+      "flavor": "Flavor A",
+      "stage": "Wire Bond",
+      "stageOrder": 2,
+      "name": "SAMPLE - TIA/DSP wire bond",
+      "rev": "A",
+      "status": "Draft",
+      "tools": [
+        {
+          "name": "Wire bonder",
+          "setting": "Placeholder: WB-02",
+          "note": "Program ID per product"
+        },
+        {
+          "name": "Bond tester",
+          "setting": "Placeholder",
+          "note": "Pull test per lot"
+        }
+      ],
+      "epoxies": [],
+      "jigs": [
+        {
+          "name": "Bond work-holder",
+          "id": "JIG-0002",
+          "note": "Placeholder fixture"
+        }
+      ],
+      "cure": {
+        "method": "None",
+        "atmosphere": "",
+        "segments": []
+      },
+      "steps": [
+        "Load work-holder and select program.",
+        "Run bonding.",
+        "Visual inspection and pull test sample."
+      ],
+      "notes": "SAMPLE DATA - replace with the released recipe.",
+      "updatedAt": "2026-11-10T08:00:00.000Z"
+    },
+    {
+      "id": "osfp-dr8__flavor-a__tim-heat-spreader",
+      "product": "OSFP DR8",
+      "flavor": "Flavor A",
+      "stage": "TIM & Heat Spreader",
+      "stageOrder": 3,
+      "name": "SAMPLE - TIM apply and heat spreader attach",
+      "rev": "A",
+      "status": "Draft",
+      "tools": [
+        {
+          "name": "Dispenser",
+          "setting": "Placeholder: DSP-03",
+          "note": ""
+        }
+      ],
+      "epoxies": [
+        {
+          "name": "TIM material (placeholder)",
+          "pn": "TIM-0001",
+          "supplier": "Supplier Y",
+          "mix": "Pre-mixed",
+          "potLife": "8 h",
+          "storage": "5 C"
+        }
+      ],
+      "jigs": [
+        {
+          "name": "Heat spreader press fixture",
+          "id": "JIG-0003",
+          "note": "Placeholder fixture"
+        }
+      ],
+      "cure": {
+        "method": "Box oven",
+        "atmosphere": "Air",
+        "segments": [
+          {
+            "label": "Ramp",
+            "temp": 125,
+            "min": 15
+          },
+          {
+            "label": "Hold",
+            "temp": 125,
+            "min": 90
+          },
+          {
+            "label": "Cool down",
+            "temp": 25,
+            "min": 30
+          }
+        ]
+      },
+      "steps": [
+        "Dispense TIM.",
+        "Place heat spreader in press fixture.",
+        "Cure per profile.",
+        "Inspect for voids/delamination."
+      ],
+      "notes": "SAMPLE DATA - replace with the released recipe.",
+      "updatedAt": "2026-11-10T08:00:00.000Z"
+    },
+    {
+      "id": "osfp-dr8__flavor-b__die-attach",
+      "product": "OSFP DR8",
+      "flavor": "Flavor B",
+      "stage": "Die Attach",
+      "stageOrder": 1,
+      "name": "SAMPLE - DSP die attach (Flavor B)",
+      "rev": "A",
+      "status": "Released",
+      "tools": [
+        {
+          "name": "Die bonder",
+          "setting": "Placeholder: Bonder-01",
+          "note": ""
+        }
+      ],
+      "epoxies": [
+        {
+          "name": "Die attach epoxy (placeholder)",
+          "pn": "EPO-0002",
+          "supplier": "Supplier X",
+          "mix": "Pre-mixed syringe",
+          "potLife": "24 h",
+          "storage": "-40 C"
+        }
+      ],
+      "jigs": [
+        {
+          "name": "Substrate carrier",
+          "id": "JIG-0004",
+          "note": "Placeholder fixture"
+        }
+      ],
+      "cure": {
+        "method": "Box oven",
+        "atmosphere": "N2",
+        "segments": [
+          {
+            "label": "Ramp",
+            "temp": 165,
+            "min": 25
+          },
+          {
+            "label": "Hold",
+            "temp": 165,
+            "min": 45
+          },
+          {
+            "label": "Cool down",
+            "temp": 25,
+            "min": 30
+          }
+        ]
+      },
+      "steps": [
+        "Thaw epoxy.",
+        "Load substrate.",
+        "Dispense and place die.",
+        "Cure."
+      ],
+      "notes": "SAMPLE DATA - replace with the released recipe.",
+      "updatedAt": "2026-11-10T08:00:00.000Z"
+    },
+    {
+      "id": "qsfp-dd-fr4__flavor-a__die-attach",
+      "product": "QSFP-DD FR4",
+      "flavor": "Flavor A",
+      "stage": "Die Attach",
+      "stageOrder": 1,
+      "name": "SAMPLE - PD die attach",
+      "rev": "B",
+      "status": "Released",
+      "tools": [
+        {
+          "name": "Die bonder",
+          "setting": "Placeholder: Bonder-02",
+          "note": ""
+        }
+      ],
+      "epoxies": [
+        {
+          "name": "Conductive epoxy (placeholder)",
+          "pn": "EPO-0003",
+          "supplier": "Supplier Z",
+          "mix": "Pre-mixed",
+          "potLife": "12 h",
+          "storage": "-40 C"
+        }
+      ],
+      "jigs": [
+        {
+          "name": "PD carrier",
+          "id": "JIG-0005",
+          "note": "Placeholder fixture"
+        }
+      ],
+      "cure": {
+        "method": "Box oven",
+        "atmosphere": "Air",
+        "segments": [
+          {
+            "label": "Ramp",
+            "temp": 150,
+            "min": 15
+          },
+          {
+            "label": "Hold",
+            "temp": 150,
+            "min": 60
+          },
+          {
+            "label": "Cool down",
+            "temp": 25,
+            "min": 25
+          }
+        ]
+      },
+      "steps": [
+        "Thaw epoxy.",
+        "Place PD die.",
+        "Cure."
+      ],
+      "notes": "SAMPLE DATA - replace with the released recipe.",
+      "updatedAt": "2026-11-10T08:00:00.000Z"
+    }
+  ]
+}

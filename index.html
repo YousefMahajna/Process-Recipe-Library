@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Process Recipe Library</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface2: #eef1f5; --text: #1a2230; --muted: #5d6879;
+  --border: #d9dee6; --accent: #1b6ef3; --accent-text: #ffffff; --ok: #1a7f4b; --ok-bg: #e0f4e9;
+  --warn: #9a6200; --warn-bg: #fdf0d2; --bad: #b3261e; --bad-bg: #fbe4e2; --chart: #1b6ef3;
+  box-sizing: border-box; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --surface2: #232b37; --text: #e8ecf2; --muted: #9aa5b5;
+    --border: #2f3947; --accent: #5b9bff; --accent-text: #0b1220; --ok: #62d39a; --ok-bg: #173526;
+    --warn: #f0be5a; --warn-bg: #3a2e12; --bad: #ff8d85; --bad-bg: #3b1a18; --chart: #5b9bff; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+.sub { color: var(--muted); font-size: 13px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 160px; flex: 1; }
+.field label { font-size: 12px; color: var(--muted); font-weight: 600; }
+select, input, textarea { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; width: 100%; min-height: 40px; }
+textarea { min-height: 90px; resize: vertical; }
+select:focus, input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2);
+  color: var(--text); padding: 8px 14px; min-height: 40px; }
+button:disabled { opacity: .6; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); }
+button.small { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.tab { border-radius: 999px; padding: 6px 14px; min-height: 36px; }
+.tab[aria-selected="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+.tab .n { opacity: .7; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.recipe-head { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
+.recipe-head h3 { margin: 0 0 4px; font-size: 20px; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); }
+.badge.Released { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.badge.Draft { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.badge.Obsolete { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
+.crumbs { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.scroll { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: 14px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; }
+ol.steps { margin: 0; padding-left: 22px; } ol.steps li { margin-bottom: 6px; }
+.empty { text-align: center; padding: 40px 16px; color: var(--muted); }
+.note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 14px; }
+.note.bad { background: var(--bad-bg); color: var(--bad); }
+.hit { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-bottom: 8px; background: var(--surface); }
+.hit span.m { color: var(--muted); font-size: 13px; }
+.edit-row { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) auto; align-items: end; margin-bottom: 8px;
+  padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+.ok-msg { color: var(--ok); font-size: 13px; }
+svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+@media print {
+  .noprint { display: none !important; }
+  body { background: #fff; color: #000; }
+  .card { border-color: #999; break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top noprint">
+    <div>
+      <h1>Process Recipe Library</h1>
+      <div class="sub">Product → Flavor → Stage. Tools, epoxies, jigs and curing in one place.</div>
+    </div>
+    <div class="actions" id="topActions"></div>
+  </header>
+  <div id="login"></div>
+  <div id="app"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ============ CONFIG: change these to match your GitHub repo ============
+  var CFG = { owner: "YousefMahajna", repo: "Process-Recipe-Library", branch: "main", path: "data.json" };
+  // =========================================================================
+
+  var API = "https://api.github.com/repos/" + CFG.owner + "/" + CFG.repo + "/contents/" + CFG.path;
+
+  // ---------- helpers ----------
+  function el(tag, attrs) {
+    var e = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === "class") e.className = v;
+      else if (k === "value") e.value = v;
+      else if (k.indexOf("on") === 0) e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? "" : v);
+    });
+    for (var i = 2; i < arguments.length; i++) append(e, arguments[i]);
+    return e;
+  }
+  function append(e, c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) { c.forEach(function (x) { append(e, x); }); return; }
+    e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  function slug(s) { return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x"; }
+  function recipeId(r) { return slug(r.product) + "__" + slug(r.flavor) + "__" + slug(r.stage); }
+  function uniq(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
+  function cmp(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function blank() {
+    return { product: "", flavor: "", stage: "", stageOrder: 1, name: "", rev: "A", status: "Draft",
+      tools: [], epoxies: [], jigs: [], cure: { method: "", atmosphere: "", segments: [] }, steps: [], notes: "" };
+  }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+  // base64 <-> utf8
+  function b64decode(b64) {
+    var bin = atob(b64.replace(/\s/g, ""));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+  function b64encode(str) {
+    var bytes = new TextEncoder().encode(str), bin = "";
+    for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+
+  // ---------- state ----------
+  var recipes = [];
+  var token = lsGet("rl-token") || "";
+  var canEdit = false;
+  var sel = { product: "", flavor: "", stage: "" };
+  var query = "";
+  var editing = null;
+  var loaded = false, loadError = "", busy = false, toast = "";
+  var confirmDelete = false, showLogin = false;
+  try { var s0 = JSON.parse(lsGet("rl-sel") || "null"); if (s0) sel = s0; } catch (e) {}
+
+  var app = document.getElementById("app");
+  var topActions = document.getElementById("topActions");
+  var loginBox = document.getElementById("login");
+
+  // ---------- GitHub API layer ----------
+  function ghHeaders() {
+    var h = { "Accept": "application/vnd.github+json" };
+    if (token) h["Authorization"] = "Bearer " + token;
+    return h;
+  }
+  function httpError(res, what) {
+    var e = new Error(what + " failed (" + res.status + ")"); e.status = res.status; return e;
+  }
+  // Latest data + sha via the API (needs a token for reliable use on shared networks)
+  function apiGet() {
+    return fetch(API + "?ref=" + encodeURIComponent(CFG.branch) + "&t=" + Date.now(), { headers: ghHeaders(), cache: "no-store" })
+      .then(function (res) {
+        if (!res.ok) throw httpError(res, "Reading data.json");
+        return res.json();
+      }).then(function (j) {
+        if (!j.content) throw new Error("data.json is too large for the GitHub contents API (over 1 MB). Split the data.");
+        var data = JSON.parse(b64decode(j.content));
+        return { data: normalize(data), sha: j.sha };
+      });
+  }
+  function apiPut(data, sha, message) {
+    var body = { message: message, content: b64encode(JSON.stringify(data, null, 2)), sha: sha, branch: CFG.branch };
+    return fetch(API, { method: "PUT", headers: Object.assign({ "Content-Type": "application/json" }, ghHeaders()), body: JSON.stringify(body) })
+      .then(function (res) {
+        if (!res.ok) throw httpError(res, "Saving");
+        return res.json();
+      });
+  }
+  // Read-only path for guests: same-origin file on GitHub Pages (no token, no API rate limit)
+  function pagesGet() {
+    return fetch("data.json?t=" + Date.now(), { cache: "no-store" }).then(function (res) {
+      if (!res.ok) throw httpError(res, "Loading data.json");
+      return res.json();
+    }).then(normalize);
+  }
+  function normalize(d) {
+    if (Array.isArray(d)) d = { version: 1, recipes: d };
+    d.recipes = (d.recipes || []).map(function (r) {
+      var o = Object.assign(blank(), r);
+      o.tools = Array.isArray(o.tools) ? o.tools : [];
+      o.epoxies = Array.isArray(o.epoxies) ? o.epoxies : [];
+      o.jigs = Array.isArray(o.jigs) ? o.jigs : [];
+      o.steps = Array.isArray(o.steps) ? o.steps : [];
+      o.cure = o.cure || { method: "", atmosphere: "", segments: [] };
+      o.cure.segments = Array.isArray(o.cure.segments) ? o.cure.segments : [];
+      o.id = o.id || recipeId(o);
+      return o;
+    });
+    return d;
+  }
+
+  function setRecipes(list) {
+    recipes = list.map(function (r) { var o = clone(r); o._id = o.id; return o; });
+  }
+
+  function load() {
+    loadError = "";
+    var p = token ? apiGet().then(function (r) { return r.data; }).catch(function (e) {
+      // Token problem or rate limit: fall back to the Pages copy so people can still read
+      if (e.status === 401) { token = ""; canEdit = false; lsDel("rl-token"); toast = "Saved token was rejected and was removed."; }
+      return pagesGet();
+    }) : pagesGet();
+    return p.then(function (d) {
+      setRecipes(d.recipes); loaded = true; render();
+    }).catch(function (e) {
+      loadError = (location.protocol === "file:")
+        ? "Open this page from GitHub Pages (or a local web server). Browsers block loading data.json from a file:// page."
+        : "Could not load recipes: " + e.message;
+      render();
+    });
+  }
+
+  // Read the latest file, apply one change, write it back. Retries on a race (409/422).
+  function commit(mutator, message, attempt) {
+    attempt = attempt || 0;
+    return apiGet().then(function (cur) {
+      mutator(cur.data);
+      cur.data.updatedAt = new Date().toISOString();
+      var size = JSON.stringify(cur.data).length;
+      if (size > 900000) throw new Error("data.json is getting close to GitHub's 1 MB API limit.");
+      snapshot(cur.data);
+      return apiPut(cur.data, cur.sha, message).then(function () { return cur.data; });
+    }).catch(function (e) {
+      if ((e.status === 409 || e.status === 422) && attempt < 2) return commit(mutator, message, attempt + 1);
+      throw e;
+    });
+  }
+  function snapshot(data) {
+    try {
+      var ring = JSON.parse(lsGet("rl-backup") || "[]");
+      ring.push({ t: new Date().toISOString(), d: data });
+      while (ring.length > 5) ring.shift();
+      lsSet("rl-backup", JSON.stringify(ring));
+    } catch (e) {}
+  }
+  function explain(e) {
+    if (e.status === 401) return "GitHub rejected the token (401). Log in again with a valid token.";
+    if (e.status === 403) return "No permission (403): the token needs Contents → Read and write on " + CFG.owner + "/" + CFG.repo + ", or you hit a rate limit.";
+    if (e.status === 404) return "Repo or data.json not found (404). Check owner/repo/path in the CONFIG block and that data.json exists on " + CFG.branch + ".";
+    return e.message || "Unknown error";
+  }
+
+  // ---------- login ----------
+  function verifyToken(t) {
+    return fetch("https://api.github.com/repos/" + CFG.owner + "/" + CFG.repo, {
+      headers: { "Accept": "application/vnd.github+json", "Authorization": "Bearer " + t }
+    }).then(function (res) {
+      if (!res.ok) throw httpError(res, "Checking token");
+      return res.json();
+    }).then(function (j) { return !!(j.permissions && j.permissions.push); });
+  }
+  function renderLogin() {
+    loginBox.replaceChildren();
+    if (!showLogin || canEdit) return;
+    var inp = el("input", { type: "password", placeholder: "github_pat_…", autocomplete: "off", "aria-label": "GitHub token" });
+    var msg = el("div", { class: "err", role: "alert" });
+    var go = el("button", { class: "primary", onclick: function () {
+      var t = inp.value.trim(); if (!t) return;
+      go.disabled = true; msg.textContent = "";
+      verifyToken(t).then(function (ok) {
+        if (!ok) { msg.textContent = "This token can read the repo but not write to it."; go.disabled = false; return; }
+        token = t; lsSet("rl-token", t); canEdit = true; showLogin = false; load(); renderTop(); renderLogin();
+      }).catch(function (e) { msg.textContent = explain(e); go.disabled = false; });
+    } }, "Log in");
+    loginBox.append(el("div", { class: "card noprint" }, el("h2", {}, "Editor login"),
+      el("div", { class: "sub", style: "margin-bottom:10px" },
+        "Paste a fine-grained GitHub token limited to " + CFG.owner + "/" + CFG.repo + " with Contents: Read and write. It is stored only in this browser. Never put it in the code or commit it."),
+      el("div", { class: "row" }, el("div", { class: "field" }, inp), go), msg));
+  }
+
+  function renderTop() {
+    topActions.replaceChildren();
+    topActions.append(el("button", { onclick: function () { loaded = false; render(); load(); } }, "Refresh"));
+    if (!canEdit) {
+      topActions.append(el("button", { onclick: function () { showLogin = !showLogin; renderLogin(); } }, "Editor login"));
+      return;
+    }
+    if (!editing) {
+      topActions.append(el("button", { class: "primary", onclick: function () {
+        var d = blank(); d.product = sel.product; d.flavor = sel.flavor;
+        editing = { draft: d, oldId: null }; render(); window.scrollTo(0, 0);
+      } }, "+ New recipe"));
+      topActions.append(el("button", { onclick: downloadBackup }, "Backup JSON"));
+      var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
+      topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import JSON"));
+    }
+    topActions.append(el("button", { onclick: function () { token = ""; canEdit = false; lsDel("rl-token"); editing = null; render(); } }, "Log out"));
+  }
+
+  function downloadBackup() {
+    var data = { version: 1, updatedAt: new Date().toISOString(), recipes: recipes.map(function (r) { var o = clone(r); delete o._id; return o; }) };
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = "recipe-library-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function importFile(f) {
+    if (!f) return;
+    f.text().then(function (txt) {
+      var d = normalize(JSON.parse(txt));
+      if (!d.recipes.length) { toast = "Import file has no recipes."; render(); return; }
+      if (!window.confirm("Merge " + d.recipes.length + " recipes into the library? Recipes with the same product/flavor/stage will be replaced.")) return;
+      busy = true; render();
+      return commit(function (cur) {
+        d.recipes.forEach(function (r) {
+          r.id = recipeId(r);
+          var i = cur.recipes.findIndex(function (x) { return x.id === r.id; });
+          if (i >= 0) cur.recipes[i] = r; else cur.recipes.push(r);
+        });
+      }, "Import " + d.recipes.length + " recipes").then(function (data) {
+        setRecipes(data.recipes); toast = "Imported " + d.recipes.length + " recipes."; busy = false; render();
+      });
+    }).catch(function (e) { busy = false; toast = "Import failed: " + explain(e); render(); });
+  }
+
+  // ---------- derived ----------
+  function fixSelection() {
+    var products = uniq(recipes.map(function (r) { return r.product; })).sort(cmp);
+    if (products.indexOf(sel.product) < 0) sel.product = products[0] || "";
+    var flavors = uniq(recipes.filter(function (r) { return r.product === sel.product; }).map(function (r) { return r.flavor; })).sort(cmp);
+    if (flavors.indexOf(sel.flavor) < 0) sel.flavor = flavors[0] || "";
+    var stages = recipes.filter(function (r) { return r.product === sel.product && r.flavor === sel.flavor; })
+      .sort(function (a, b) { return (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage); });
+    if (!stages.some(function (r) { return r.stage === sel.stage; })) sel.stage = stages[0] ? stages[0].stage : "";
+    return { products: products, flavors: flavors, stages: stages };
+  }
+
+  // ---------- render ----------
+  function render() {
+    renderTop(); renderLogin();
+    app.replaceChildren();
+    if (toast) { app.append(el("div", { class: "note noprint" }, toast, " ", el("button", { class: "small", onclick: function () { toast = ""; render(); } }, "Dismiss"))); }
+    if (busy) { app.append(el("div", { class: "card empty" }, "Saving to GitHub…")); return; }
+    if (loadError) { app.append(el("div", { class: "card empty" }, loadError)); return; }
+    if (!loaded) { app.append(el("div", { class: "card empty" }, "Loading recipes…")); return; }
+    if (editing) { app.append(renderEditor()); return; }
+    if (!recipes.length) {
+      app.append(el("div", { class: "card empty" }, el("div", { style: "font-size:17px;color:var(--text);margin-bottom:6px" }, "No recipes yet"),
+        canEdit ? "Use “New recipe” to add the first one." : "Log in as an editor to add recipes."));
+      return;
+    }
+    var d = fixSelection();
+    lsSet("rl-sel", JSON.stringify(sel));
+    app.append(renderPicker(d));
+    if (query.trim()) { app.append(renderSearch()); return; }
+    var cur = d.stages.filter(function (r) { return r.stage === sel.stage; })[0];
+    app.append(cur ? renderRecipe(cur) : el("div", { class: "card empty" }, "No recipe for this selection."));
+  }
+
+  function selectField(label, value, options, onchange) {
+    var s = el("select", { onchange: function (e) { onchange(e.target.value); } },
+      options.map(function (o) { return el("option", { value: o }, o); }));
+    s.value = value;
+    return el("div", { class: "field" }, el("label", {}, label), s);
+  }
+
+  function renderPicker(d) {
+    var tabs = el("div", { class: "tabs", role: "tablist", "aria-label": "Stage" },
+      d.stages.map(function (r) {
+        return el("button", { class: "tab", role: "tab", "aria-selected": String(r.stage === sel.stage),
+          onclick: function () { sel.stage = r.stage; render(); } },
+          el("span", { class: "n" }, String(r.stageOrder || "")), r.stage);
+      }));
+    return el("div", { class: "card noprint" },
+      el("div", { class: "row" },
+        selectField("Product", sel.product, d.products, function (v) { sel.product = v; sel.flavor = ""; sel.stage = ""; render(); }),
+        selectField("Flavor", sel.flavor, d.flavors, function (v) { sel.flavor = v; sel.stage = ""; render(); }),
+        el("div", { class: "field" }, el("label", {}, "Search all recipes"),
+          el("input", { type: "search", placeholder: "Recipe, epoxy, jig, tool…", value: query,
+            oninput: function (e) {
+              query = e.target.value; var pos = e.target.selectionStart; render();
+              var i = app.querySelector("input[type=search]"); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (x) {} }
+            } }))),
+      query.trim() ? null : tabs);
+  }
+
+  function haystack(r) {
+    var parts = [r.product, r.flavor, r.stage, r.name, r.notes, r.cure && r.cure.method];
+    ["tools", "epoxies", "jigs"].forEach(function (k) { (r[k] || []).forEach(function (it) { parts.push(Object.keys(it).map(function (x) { return it[x]; }).join(" ")); }); });
+    return parts.join(" ").toLowerCase();
+  }
+  function renderSearch() {
+    var q = query.trim().toLowerCase();
+    var hits = recipes.filter(function (r) { return haystack(r).indexOf(q) >= 0; })
+      .sort(function (a, b) { return cmp(a.product, b.product) || cmp(a.flavor, b.flavor) || (a.stageOrder || 0) - (b.stageOrder || 0); });
+    var box = el("div", { class: "card" }, el("h2", {}, hits.length + " match" + (hits.length === 1 ? "" : "es")));
+    hits.forEach(function (r) {
+      box.append(el("button", { class: "hit", onclick: function () { sel.product = r.product; sel.flavor = r.flavor; sel.stage = r.stage; query = ""; render(); } },
+        el("span", {}, el("strong", {}, r.name || r.stage)), el("span", { class: "m" }, r.product + " · " + r.flavor + " · " + r.stage)));
+    });
+    return box;
+  }
+
+  function section(title, body) { return el("div", { class: "card" }, el("h2", {}, title), body); }
+  function table(cols, rows) {
+    if (!rows || !rows.length) return el("div", { class: "sub" }, "None listed.");
+    return el("div", { class: "scroll" }, el("table", {},
+      el("thead", {}, el("tr", {}, cols.map(function (c) { return el("th", {}, c.label); }))),
+      el("tbody", {}, rows.map(function (r) { return el("tr", {}, cols.map(function (c) { return el("td", {}, r[c.k] || "—"); })); }))));
+  }
+  var TOOL_COLS = [{ k: "name", label: "Tool / equipment" }, { k: "setting", label: "ID / setting" }, { k: "note", label: "Note" }];
+  var EPOXY_COLS = [{ k: "name", label: "Material" }, { k: "pn", label: "P/N" }, { k: "supplier", label: "Supplier" },
+    { k: "mix", label: "Mix / dispense" }, { k: "potLife", label: "Pot life" }, { k: "storage", label: "Storage" }];
+  var JIG_COLS = [{ k: "name", label: "Jig / fixture" }, { k: "id", label: "ID" }, { k: "note", label: "Note" }];
+
+  function renderRecipe(r) {
+    var head = el("div", { class: "card" },
+      el("div", { class: "recipe-head" },
+        el("div", {},
+          el("div", { class: "crumbs" }, r.product + " › " + r.flavor + " › " + r.stage),
+          el("h3", {}, r.name || r.stage),
+          el("div", {}, el("span", { class: "badge " + (r.status || "") }, r.status || "—"), " ",
+            el("span", { class: "sub" }, "Rev " + (r.rev || "—") + (r.updatedAt ? " · updated " + new Date(r.updatedAt).toLocaleDateString() : "")))),
+        el("div", { class: "actions noprint" },
+          el("button", { onclick: function () { window.print(); } }, "Print"),
+          canEdit ? el("button", { onclick: function () { editing = { draft: clone(Object.assign(blank(), r)), oldId: r._id }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
+    var w = el("div", {}, head);
+    if (r.status === "Obsolete") w.append(el("div", { class: "note bad" }, "This recipe is obsolete. Check with process engineering before running it."));
+    if (r.status === "Draft") w.append(el("div", { class: "note" }, "Draft recipe, not yet released."));
+    w.append(el("div", { class: "grid2" },
+      section("Tools & equipment", table(TOOL_COLS, r.tools)),
+      section("Jigs & fixtures", table(JIG_COLS, r.jigs))));
+    w.append(section("Epoxies & materials", table(EPOXY_COLS, r.epoxies)));
+    w.append(renderCure(r.cure));
+    if (r.steps && r.steps.length) w.append(section("Procedure", el("ol", { class: "steps" }, r.steps.map(function (s) { return el("li", {}, s); }))));
+    if (r.notes) w.append(section("Notes", el("div", { style: "white-space:pre-wrap" }, r.notes)));
+    return w;
+  }
+
+  function renderCure(c) {
+    c = c || {};
+    var segs = (c.segments || []).filter(function (s) { return isFinite(s.temp) && isFinite(s.min) && s.temp !== "" && s.min !== ""; });
+    var body = el("div", {}, el("dl", { class: "kv" },
+      el("dt", {}, "Method"), el("dd", {}, c.method || "—"),
+      el("dt", {}, "Atmosphere"), el("dd", {}, c.atmosphere || "—")));
+    if (segs.length) {
+      body.append(el("div", { style: "margin-top:12px" }, table(
+        [{ k: "label", label: "Segment" }, { k: "temp", label: "Target °C" }, { k: "min", label: "Time (min)" }],
+        segs.map(function (s) { return { label: s.label, temp: String(s.temp), min: String(s.min) }; }))));
+      body.append(profileChart(segs));
+    }
+    return section("Curing profile", body);
+  }
+
+  function profileChart(segs) {
+    var W = 560, H = 200, L = 44, R = 12, T = 12, B = 30, amb = 25;
+    var pts = [[0, amb]], t = 0;
+    segs.forEach(function (s) { t += Number(s.min); pts.push([t, Number(s.temp)]); });
+    var temps = pts.map(function (p) { return p[1]; });
+    var maxT = Math.max.apply(null, temps.concat([amb + 10])), minT = Math.min.apply(null, temps);
+    var top = Math.ceil(maxT / 20) * 20, bot = Math.floor(minT / 20) * 20;
+    if (bot === top) top = bot + 20;
+    var totalT = Math.max(t, 1);
+    function X(v) { return L + (v / totalT) * (W - L - R); }
+    function Y(v) { return T + (1 - (v - bot) / (top - bot)) * (H - T - B); }
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Cure temperature profile, total " + t + " minutes, peak " + maxT + " degrees C");
+    svg.style.cssText = "width:100%;max-width:640px;height:auto;margin-top:12px";
+    function add(tag, attrs, text) {
+      var n = document.createElementNS(ns, tag);
+      Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+      if (text !== undefined) n.textContent = text;
+      svg.appendChild(n);
+    }
+    for (var v = bot; v <= top; v += 20) {
+      add("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--border)", "stroke-width": 1 });
+      add("text", { x: L - 6, y: Y(v) + 4, "text-anchor": "end" }, String(v));
+    }
+    add("text", { x: L, y: H - 6 }, "0");
+    add("text", { x: W - R, y: H - 6, "text-anchor": "end" }, t + " min");
+    add("text", { x: 4, y: 10 }, "°C");
+    add("polyline", { points: pts.map(function (p) { return X(p[0]) + "," + Y(p[1]); }).join(" "), fill: "none", stroke: "var(--chart)", "stroke-width": 2.5, "stroke-linejoin": "round" });
+    pts.forEach(function (p) { add("circle", { cx: X(p[0]), cy: Y(p[1]), r: 3.5, fill: "var(--chart)" }); });
+    return svg;
+  }
+
+  // ---------- editor ----------
+  function textField(label, obj, key, opts) {
+    opts = opts || {};
+    var input = el(opts.area ? "textarea" : "input", { type: opts.number ? "number" : "text", value: obj[key] == null ? "" : obj[key], placeholder: opts.ph || "",
+      list: opts.list,
+      oninput: function (e) { obj[key] = opts.number ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value; } });
+    return el("div", { class: "field", style: opts.style }, label ? el("label", {}, label) : null, input);
+  }
+  function listEditor(title, arr, fields, rerender) {
+    var box = el("div", { class: "card" }, el("h2", {}, title));
+    arr.forEach(function (item, i) {
+      box.append(el("div", { class: "edit-row" },
+        fields.map(function (f) { return textField(f.label, item, f.k, { number: f.number }); }),
+        el("button", { class: "small danger", "aria-label": "Remove row", onclick: function () { arr.splice(i, 1); rerender(); } }, "Remove")));
+    });
+    box.append(el("button", { class: "small", onclick: function () { var o = {}; fields.forEach(function (f) { o[f.k] = ""; }); arr.push(o); rerender(); } }, "+ Add row"));
+    return box;
+  }
+
+  function renderEditor() {
+    var draft = editing.draft, oldId = editing.oldId;
+    var root = el("div", {});
+    var errBox = el("div", { class: "err", role: "alert" });
+    function rerender() { var n = renderEditor(); root.replaceWith(n); root = n; }
+    var dl = el("div", {},
+      el("datalist", { id: "dl-products" }, uniq(recipes.map(function (r) { return r.product; })).map(function (v) { return el("option", { value: v }); })),
+      el("datalist", { id: "dl-flavors" }, uniq(recipes.map(function (r) { return r.flavor; })).map(function (v) { return el("option", { value: v }); })),
+      el("datalist", { id: "dl-stages" }, uniq(recipes.map(function (r) { return r.stage; })).map(function (v) { return el("option", { value: v }); })));
+    var statusSel = el("select", { onchange: function (e) { draft.status = e.target.value; } },
+      ["Draft", "Released", "Obsolete"].map(function (s) { return el("option", { value: s }, s); }));
+    statusSel.value = draft.status || "Draft";
+    var stepsArea = el("textarea", { style: "min-height:140px", placeholder: "One step per line", value: (draft.steps || []).join("\n"),
+      oninput: function (e) { draft.steps = e.target.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean); } });
+    if (!draft.cure) draft.cure = { method: "", atmosphere: "", segments: [] };
+    if (!draft.cure.segments) draft.cure.segments = [];
+
+    var saveBtn = el("button", { class: "primary", onclick: save }, "Save to GitHub");
+    function save() {
+      errBox.textContent = "";
+      if (!String(draft.product).trim() || !String(draft.flavor).trim() || !String(draft.stage).trim() || !String(draft.name).trim()) {
+        errBox.textContent = "Product, flavor, stage and recipe name are required."; return;
+      }
+      var out = clone(draft);
+      ["tools", "epoxies", "jigs"].forEach(function (k) {
+        out[k] = (out[k] || []).filter(function (it) { return Object.keys(it).some(function (x) { return String(it[x]).trim(); }); });
+      });
+      out.cure.segments = (out.cure.segments || []).filter(function (s) { return s.temp !== "" && s.min !== ""; });
+      out.product = out.product.trim(); out.flavor = out.flavor.trim(); out.stage = out.stage.trim();
+      out.stageOrder = Number(out.stageOrder) || 1;
+      out.updatedAt = new Date().toISOString();
+      delete out._id;
+      out.id = recipeId(out);
+      if (out.id !== oldId && recipes.some(function (r) { return r._id === out.id; })) {
+        errBox.textContent = "A recipe already exists for this product, flavor and stage. Edit that one instead."; return;
+      }
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+      commit(function (cur) {
+        if (oldId && oldId !== out.id) cur.recipes = cur.recipes.filter(function (r) { return r.id !== oldId; });
+        var i = cur.recipes.findIndex(function (r) { return r.id === out.id; });
+        if (i >= 0) cur.recipes[i] = out; else cur.recipes.push(out);
+      }, (oldId ? "Update" : "Add") + " recipe: " + out.product + " / " + out.flavor + " / " + out.stage).then(function (data) {
+        setRecipes(data.recipes);
+        sel = { product: out.product, flavor: out.flavor, stage: out.stage };
+        editing = null; toast = "Saved to GitHub. Other users see it after the Pages site rebuilds (about a minute) or when they press Refresh while logged in."; render(); window.scrollTo(0, 0);
+      }).catch(function (e) {
+        saveBtn.disabled = false; saveBtn.textContent = "Save to GitHub";
+        errBox.textContent = "Not saved: " + explain(e) + " Your edits are still on screen.";
+      });
+    }
+
+    var delBtn = null;
+    if (oldId) {
+      delBtn = el("button", { class: "danger", onclick: function () {
+        if (!confirmDelete) { confirmDelete = true; delBtn.textContent = "Click again to delete"; return; }
+        delBtn.disabled = true;
+        commit(function (cur) { cur.recipes = cur.recipes.filter(function (r) { return r.id !== oldId; }); }, "Delete recipe " + oldId)
+          .then(function (data) { setRecipes(data.recipes); editing = null; confirmDelete = false; render(); })
+          .catch(function (e) { delBtn.disabled = false; errBox.textContent = "Not deleted: " + explain(e); });
+      } }, "Delete");
+    }
+
+    root.append(dl,
+      el("div", { class: "card" }, el("h2", {}, oldId ? "Edit recipe" : "New recipe"),
+        el("div", { class: "row" },
+          textField("Product", draft, "product", { list: "dl-products", ph: "e.g. OSFP DR8" }),
+          textField("Flavor", draft, "flavor", { list: "dl-flavors", ph: "e.g. Flavor A" }),
+          textField("Stage", draft, "stage", { list: "dl-stages", ph: "e.g. Die Attach" }),
+          textField("Stage order", draft, "stageOrder", { number: true })),
+        el("div", { class: "row", style: "margin-top:12px" },
+          textField("Recipe name", draft, "name", { style: "flex:3" }),
+          textField("Revision", draft, "rev"),
+          el("div", { class: "field" }, el("label", {}, "Status"), statusSel))),
+      listEditor("Tools & equipment", draft.tools, [{ k: "name", label: "Tool" }, { k: "setting", label: "ID / setting" }, { k: "note", label: "Note" }], rerender),
+      listEditor("Jigs & fixtures", draft.jigs, [{ k: "name", label: "Jig" }, { k: "id", label: "ID" }, { k: "note", label: "Note" }], rerender),
+      listEditor("Epoxies & materials", draft.epoxies, [{ k: "name", label: "Material" }, { k: "pn", label: "P/N" }, { k: "supplier", label: "Supplier" },
+        { k: "mix", label: "Mix / dispense" }, { k: "potLife", label: "Pot life" }, { k: "storage", label: "Storage" }], rerender),
+      el("div", { class: "card" }, el("h2", {}, "Curing"),
+        el("div", { class: "row" }, textField("Method", draft.cure, "method", { ph: "Box oven / UV / room temp" }), textField("Atmosphere", draft.cure, "atmosphere", { ph: "Air / N2" })),
+        el("div", { class: "sub", style: "margin:10px 0" }, "Each segment ramps from the previous temperature to its target over the given minutes. Same temperature as before = hold. The chart starts at 25 °C."),
+        listEditor("Segments", draft.cure.segments, [{ k: "label", label: "Label" }, { k: "temp", label: "Target °C", number: true }, { k: "min", label: "Minutes", number: true }], rerender)),
+      el("div", { class: "card" }, el("h2", {}, "Procedure"), stepsArea),
+      el("div", { class: "card" }, el("h2", {}, "Notes"), textField("", draft, "notes", { area: true })),
+      el("div", { class: "actions" }, saveBtn,
+        el("button", { onclick: function () { editing = null; confirmDelete = false; render(); } }, "Cancel"), delBtn),
+      errBox);
+    return root;
+  }
+
+  // ---------- start ----------
+  render();
+  if (token) {
+    verifyToken(token).then(function (ok) { canEdit = ok; render(); }).catch(function () {});
+  }
+  load();
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && loaded && !editing && !busy) load(); });
+})();
+</script>
+</body>
+</html>
