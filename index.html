@@ -73,23 +73,22 @@ ol.steps { margin: 0; padding-left: 22px; } ol.steps li { margin-bottom: 6px; }
 .empty { text-align: center; padding: 40px 16px; color: var(--muted); }
 .note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 14px; }
 .note.bad { background: var(--bad-bg); color: var(--bad); }
-.hit { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-bottom: 8px; background: var(--surface); }
+.hit { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin-bottom: 8px; background: var(--surface); align-items: center; }
 .hit span.m { color: var(--muted); font-size: 13px; }
 .edit-row { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) auto; align-items: end; margin-bottom: 8px;
   padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
-.ok-msg { color: var(--ok); font-size: 13px; }
 svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
 .gallery figure { margin: 0; }
 .thumb { padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; width: 100%; background: var(--surface2); display: block; min-height: 0; }
-.gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+.gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: var(--surface2); }
 .gallery figcaption { font-size: 13px; color: var(--muted); margin-top: 4px; }
 img.broken { background: var(--surface2); min-height: 120px; color: var(--muted); font-size: 12px; }
 .photo-edit { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .pe { border: 1px solid var(--border); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
-.pe img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; }
+.pe img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; background: var(--surface2); }
 .lb { position: fixed; inset: 0; background: rgba(0,0,0,.88); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
 .lb-img { max-width: 100%; max-height: 80vh; display: flex; }
 .lb-img img { max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 6px; }
@@ -117,7 +116,6 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     </div>
     <div class="actions" id="topActions"></div>
   </header>
-  <div id="login"></div>
   <div id="app"></div>
 </div>
 
@@ -125,11 +123,17 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 (function () {
   "use strict";
 
-  // ============ CONFIG: change these to match your GitHub repo ============
-  var CFG = { owner: "YousefMahajna", repo: "Process-Recipe-Library", branch: "main", path: "data.json" };
-  // =========================================================================
+  // ===================== CONFIG (edit this one line) =====================
+  // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
+  var DB_URL = "https://YOUR-PROJECT-default-rtdb.firebaseio.com";
+  // Everything is stored under this folder, so it never collides with your other apps in the same database.
+  var ROOT = "processRecipeLibrary";
+  // =======================================================================
 
-  var API = "https://api.github.com/repos/" + CFG.owner + "/" + CFG.repo + "/contents/" + CFG.path;
+  var BASE = DB_URL.replace(/\/+$/, "") + "/" + ROOT + "/";
+  var NOT_CONFIGURED = /YOUR-PROJECT/.test(DB_URL);
+  var REFRESH_MS = 30000;
+  var MAX_PHOTOS = 12;
 
   // ---------- helpers ----------
   function el(tag, attrs) {
@@ -156,49 +160,47 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function uniq(a) { return a.filter(function (v, i) { return a.indexOf(v) === i; }); }
   function cmp(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function blank() {
     return { product: "", flavor: "", stage: "", stageOrder: 1, name: "", rev: "A", status: "Draft",
       tools: [], epoxies: [], jigs: [], cure: { method: "", atmosphere: "", segments: [] }, steps: [], images: [], notes: "" };
   }
-  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
-
-  // base64 <-> utf8
-  function b64decode(b64) {
-    var bin = atob(b64.replace(/\s/g, ""));
-    var bytes = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return new TextDecoder("utf-8").decode(bytes);
+  // Firebase turns arrays into objects and drops empty ones, so always normalise on read.
+  function toArr(x) {
+    if (Array.isArray(x)) return x.filter(function (v) { return v !== null && v !== undefined; });
+    if (x && typeof x === "object") return Object.keys(x).sort(function (a, b) { return Number(a) - Number(b) || cmp(a, b); }).map(function (k) { return x[k]; });
+    return [];
   }
-  function b64encode(str) {
-    var bytes = new TextEncoder().encode(str), bin = "";
-    for (var i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return btoa(bin);
+  function normRecipe(id, r) {
+    var o = Object.assign(blank(), r || {});
+    ["tools", "epoxies", "jigs", "steps", "images"].forEach(function (k) { o[k] = toArr(o[k]); });
+    o.cure = Object.assign({ method: "", atmosphere: "", segments: [] }, o.cure || {});
+    o.cure.segments = toArr(o.cure.segments);
+    o.id = id || recipeId(o); o._id = o.id;
+    return o;
   }
-
-  // ---------- state ----------
-  var recipes = [];
-  var token = lsGet("rl-token") || "";
-  var canEdit = false;
-  var sel = { product: "", flavor: "", stage: "" };
-  var query = "";
-  var editing = null;
-  var libUpdated = "";
-  var loaded = false, loadError = "", busy = false, toast = "";
-  var confirmDelete = false, showLogin = false;
-  try { var s0 = JSON.parse(lsGet("rl-sel") || "null"); if (s0) sel = s0; } catch (e) {}
-
-  var app = document.getElementById("app");
-  var topActions = document.getElementById("topActions");
-  var loginBox = document.getElementById("login");
-  var clockDate = document.getElementById("clockDate"), clockTime = document.getElementById("clockTime"), clockRev = document.getElementById("clockRev");
+  function stripLocal(r) { var o = clone(r); delete o._id; return o; }
 
   function fmtDT(iso) {
     if (!iso) return "—";
     var d = new Date(iso); if (isNaN(d)) return "—";
     return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   }
+
+  // ---------- state ----------
+  var recipes = [], libUpdated = "", lastSig = "";
+  var role = lsGet("rl-role") === "editor" ? "editor" : "viewer";
+  var sel = { product: "", flavor: "", stage: "" };
+  var query = "", editing = null;
+  var loaded = false, loadError = "", busy = "", toast = "", confirmDelete = false;
+  try { var s0 = JSON.parse(lsGet("rl-sel") || "null"); if (s0) sel = s0; } catch (e) {}
+  function canEdit() { return role === "editor"; }
+
+  var app = document.getElementById("app");
+  var topActions = document.getElementById("topActions");
+  var clockDate = document.getElementById("clockDate"), clockTime = document.getElementById("clockTime"), clockRev = document.getElementById("clockRev");
+
   function tick() {
     var n = new Date();
     clockDate.textContent = n.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -206,178 +208,94 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
   function renderRev() { clockRev.textContent = libUpdated ? "Last revision: " + fmtDT(libUpdated) : ""; }
 
-  // ---------- GitHub API layer ----------
-  function ghHeaders() {
-    var h = { "Accept": "application/vnd.github+json" };
-    if (token) h["Authorization"] = "Bearer " + token;
-    return h;
-  }
-  function httpError(res, what) {
-    var e = new Error(what + " failed (" + res.status + ")"); e.status = res.status; return e;
-  }
-  // Latest data + sha via the API (needs a token for reliable use on shared networks)
-  function apiGet() {
-    return fetch(API + "?ref=" + encodeURIComponent(CFG.branch) + "&t=" + Date.now(), { headers: ghHeaders(), cache: "no-store" })
-      .then(function (res) {
-        if (!res.ok) throw httpError(res, "Reading data.json");
-        return res.json();
-      }).then(function (j) {
-        if (!j.content) throw new Error("data.json is too large for the GitHub contents API (over 1 MB). Split the data.");
-        var data = JSON.parse(b64decode(j.content));
-        return { data: normalize(data), sha: j.sha };
-      });
-  }
-  function apiPut(data, sha, message) {
-    var body = { message: message, content: b64encode(JSON.stringify(data, null, 2)), sha: sha, branch: CFG.branch };
-    return fetch(API, { method: "PUT", headers: Object.assign({ "Content-Type": "application/json" }, ghHeaders()), body: JSON.stringify(body) })
-      .then(function (res) {
-        if (!res.ok) throw httpError(res, "Saving");
-        return res.json();
-      });
-  }
-  // Read-only path for guests: same-origin file on GitHub Pages (no token, no API rate limit)
-  function pagesGet() {
-    return fetch("data.json?t=" + Date.now(), { cache: "no-store" }).then(function (res) {
-      if (!res.ok) throw httpError(res, "Loading data.json");
+  // ---------- database layer (Firebase Realtime Database REST) ----------
+  function dbReq(method, path, body, query) {
+    var opt = { method: method, cache: "no-store" };
+    if (body !== undefined) { opt.headers = { "Content-Type": "application/json" }; opt.body = JSON.stringify(body); }
+    return fetch(BASE + path + ".json" + (query || ""), opt).then(function (res) {
+      if (!res.ok) { var e = new Error("Database " + method + " failed (" + res.status + ")"); e.status = res.status; throw e; }
       return res.json();
-    }).then(normalize);
-  }
-  function normalize(d) {
-    if (Array.isArray(d)) d = { version: 1, recipes: d };
-    d.recipes = (d.recipes || []).map(function (r) {
-      var o = Object.assign(blank(), r);
-      o.tools = Array.isArray(o.tools) ? o.tools : [];
-      o.epoxies = Array.isArray(o.epoxies) ? o.epoxies : [];
-      o.jigs = Array.isArray(o.jigs) ? o.jigs : [];
-      o.steps = Array.isArray(o.steps) ? o.steps : [];
-      o.images = Array.isArray(o.images) ? o.images : [];
-      o.cure = o.cure || { method: "", atmosphere: "", segments: [] };
-      o.cure.segments = Array.isArray(o.cure.segments) ? o.cure.segments : [];
-      o.id = o.id || recipeId(o);
-      return o;
-    });
-    return d;
-  }
-
-  function setRecipes(list, ts) {
-    recipes = list.map(function (r) { var o = clone(r); o._id = o.id; return o; });
-    var newest = recipes.reduce(function (m, r) { return r.updatedAt && r.updatedAt > m ? r.updatedAt : m; }, "");
-    libUpdated = (ts && ts > newest) ? ts : (newest || ts || "");
-  }
-
-  function load() {
-    loadError = "";
-    var p = token ? apiGet().then(function (r) { return r.data; }).catch(function (e) {
-      // Token problem or rate limit: fall back to the Pages copy so people can still read
-      if (e.status === 401) { token = ""; canEdit = false; lsDel("rl-token"); toast = "Saved token was rejected and was removed."; }
-      return pagesGet();
-    }) : pagesGet();
-    return p.then(function (d) {
-      setRecipes(d.recipes, d.updatedAt); loaded = true; render();
-    }).catch(function (e) {
-      loadError = (location.protocol === "file:")
-        ? "Open this page from GitHub Pages (or a local web server). Browsers block loading data.json from a file:// page."
-        : "Could not load recipes: " + e.message;
-      render();
     });
   }
-
-  // Read the latest file, apply one change, write it back. Retries on a race (409/422).
-  function commit(mutator, message, attempt) {
-    attempt = attempt || 0;
-    return apiGet().then(function (cur) {
-      mutator(cur.data);
-      cur.data.updatedAt = new Date().toISOString();
-      var size = JSON.stringify(cur.data).length;
-      if (size > 900000) throw new Error("data.json is getting close to GitHub's 1 MB API limit.");
-      snapshot(cur.data);
-      return apiPut(cur.data, cur.sha, message).then(function () { return cur.data; });
-    }).catch(function (e) {
-      if ((e.status === 409 || e.status === 422) && attempt < 2) return commit(mutator, message, attempt + 1);
-      throw e;
-    });
-  }
-  function snapshot(data) {
-    try {
-      var ring = JSON.parse(lsGet("rl-backup") || "[]");
-      ring.push({ t: new Date().toISOString(), d: data });
-      while (ring.length > 5) ring.shift();
-      lsSet("rl-backup", JSON.stringify(ring));
-    } catch (e) {}
-  }
+  function dbGet(p, q) { return dbReq("GET", p, undefined, q); }
+  function dbPut(p, v) { return dbReq("PUT", p, v); }
+  function dbDel(p) { return dbReq("DELETE", p); }
   function explain(e) {
-    if (e.status === 401) return "GitHub rejected the token (401). Log in again with a valid token.";
-    if (e.status === 403) return "No permission (403): the token needs Contents → Read and write on " + CFG.owner + "/" + CFG.repo + ", or you hit a rate limit.";
-    if (e.status === 404) return "Repo or data.json not found (404). Check owner/repo/path in the CONFIG block and that data.json exists on " + CFG.branch + ".";
+    if (e.cancelled) return "";
+    if (e.status === 401 || e.status === 403) return "The database refused access. In Firebase → Realtime Database → Rules, allow read and write for this app.";
+    if (e.status === 404) return "Database not found. Check DB_URL at the top of index.html.";
+    if (e.name === "TypeError") return "Cannot reach the database. Check your network connection and DB_URL.";
     return e.message || "Unknown error";
+  }
+  function touchMeta(ts) { return dbPut("meta/updatedAt", ts); }
+
+  function load(force) {
+    if (NOT_CONFIGURED) return Promise.resolve();
+    return Promise.all([dbGet("recipes"), dbGet("meta/updatedAt")]).then(function (r) {
+      var obj = r[0] || {};
+      var list = Object.keys(obj).map(function (k) { return normRecipe(k, obj[k]); });
+      var newest = list.reduce(function (m, x) { return x.updatedAt && x.updatedAt > m ? x.updatedAt : m; }, "");
+      var ts = (r[1] && r[1] > newest) ? r[1] : (newest || r[1] || "");
+      var sig = JSON.stringify([list, ts]);
+      var first = !loaded;
+      loaded = true; loadError = "";
+      if (first || force || sig !== lastSig) { recipes = list; libUpdated = ts; lastSig = sig; render(); }
+    }).catch(function (e) {
+      if (!loaded) { loadError = "Could not load recipes: " + explain(e); render(); }
+    });
   }
 
   // ---------- photos ----------
-  var CONTENTS = "https://api.github.com/repos/" + CFG.owner + "/" + CFG.repo + "/contents/";
-  var imgCache = {};            // path -> data URL (so fresh uploads show before Pages rebuilds)
-  var MAX_PHOTOS = 12;
-
+  var imgCache = {}, imgPending = {};
   function resizeImage(file) {
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file), img = new Image();
       img.onload = function () {
-        var w = img.naturalWidth, h = img.naturalHeight, sc = Math.min(1, 1600 / Math.max(w, h));
+        var w = img.naturalWidth, h = img.naturalHeight, sc = Math.min(1, 1400 / Math.max(w, h));
         var c = document.createElement("canvas");
         c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
         var ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
         ctx.drawImage(img, 0, 0, c.width, c.height);
         URL.revokeObjectURL(url);
-        var out = c.toDataURL("image/jpeg", 0.8);
-        if (out.length > 1300000) out = c.toDataURL("image/jpeg", 0.6);
+        var out = c.toDataURL("image/jpeg", 0.78);
+        if (out.length > 900000) out = c.toDataURL("image/jpeg", 0.6);
         resolve(out);
       };
       img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("Could not read " + file.name + " (use a JPG or PNG)")); };
       img.src = url;
     });
   }
-  function putNewFile(path, dataUrl, attempt) {
-    attempt = attempt || 0;
-    var body = { message: "Add photo " + path, content: dataUrl.split(",")[1], branch: CFG.branch };
-    return fetch(CONTENTS + path, { method: "PUT", headers: Object.assign({ "Content-Type": "application/json" }, ghHeaders()), body: JSON.stringify(body) })
-      .then(function (res) {
-        if (res.status === 409 && attempt < 2) return putNewFile(path, dataUrl, attempt + 1);
-        if (!res.ok) throw httpError(res, "Uploading photo");
-        return res.json();
-      });
+  function getImage(id) {
+    if (imgCache[id]) return Promise.resolve(imgCache[id]);
+    if (imgPending[id]) return imgPending[id];
+    imgPending[id] = dbGet("images/" + id).then(function (v) {
+      delete imgPending[id];
+      if (!v || !v.data) throw new Error("missing photo");
+      imgCache[id] = v.data; return v.data;
+    }).catch(function (e) { delete imgPending[id]; throw e; });
+    return imgPending[id];
+  }
+  function imgEl(id, alt) {
+    var i = el("img", { alt: alt });
+    if (imgCache[id]) i.src = imgCache[id];
+    else getImage(id).then(function (u) { i.src = u; }).catch(function () { i.classList.add("broken"); });
+    return i;
   }
   function uploadPending(out, draft, btn) {
     var todo = [];
-    draft.images.forEach(function (im, i) { if (im._data && !im.path) todo.push(i); });
+    draft.images.forEach(function (im, i) { if (im._data && !im.id) todo.push(i); });
     var chain = Promise.resolve(), n = 0;
     todo.forEach(function (i) {
       chain = chain.then(function () {
         n++; btn.textContent = "Uploading photo " + n + "/" + todo.length + "…";
-        var path = "images/" + slug(out.product) + "-" + slug(out.stage) + "-" + Date.now().toString(36) + "-" + i + ".jpg";
-        return putNewFile(path, draft.images[i]._data).then(function () { draft.images[i].path = path; imgCache[path] = draft.images[i]._data; });
+        var id = "img-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+        return dbPut("images/" + id, { data: draft.images[i]._data }).then(function () { draft.images[i].id = id; imgCache[id] = draft.images[i]._data; });
       });
     });
     return chain.then(function () {
       btn.textContent = "Saving…";
-      out.images = draft.images.filter(function (im) { return im.path; }).map(function (im) { return { path: im.path, caption: String(im.caption || "").trim() }; });
+      out.images = draft.images.filter(function (im) { return im.id; }).map(function (im) { return { id: im.id, caption: String(im.caption || "").trim() }; });
     });
-  }
-  function loadViaApi(path) {
-    return fetch(CONTENTS + path + "?ref=" + encodeURIComponent(CFG.branch), { headers: ghHeaders() }).then(function (r) {
-      if (!r.ok) throw httpError(r, "Loading photo"); return r.json();
-    }).then(function (j) {
-      if (!j.content) throw new Error("photo too large");
-      var url = "data:image/jpeg;base64," + j.content.replace(/\s/g, ""); imgCache[path] = url; return url;
-    });
-  }
-  // Same-origin path works on GitHub Pages; if the Pages rebuild hasn't finished yet, fall back to the API once.
-  function imgEl(path, alt) {
-    var i = el("img", { src: imgCache[path] || path, alt: alt, loading: "lazy" });
-    i.addEventListener("error", function () {
-      if (i.dataset.fb) { i.classList.add("broken"); return; }
-      i.dataset.fb = "1";
-      loadViaApi(path).then(function (u) { i.src = u; }).catch(function () { i.classList.add("broken"); });
-    });
-    return i;
   }
 
   var lbClose = null;
@@ -386,7 +304,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     var i = idx, imgBox = el("div", { class: "lb-img" }), cap = el("div", { class: "lb-cap" });
     var overlay = el("div", { class: "lb", role: "dialog", "aria-modal": "true", "aria-label": "Photo viewer", onclick: function (e) { if (e.target === overlay) close(); } });
     function show() {
-      imgBox.replaceChildren(imgEl(list[i].path, list[i].caption || "Process photo"));
+      imgBox.replaceChildren(imgEl(list[i].id, list[i].caption || "Process photo"));
       cap.textContent = (list[i].caption ? list[i].caption + "  " : "") + "(" + (i + 1) + "/" + list.length + ")";
     }
     function go(d) { i = (i + d + list.length) % list.length; show(); }
@@ -398,26 +316,24 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       el("button", { class: "lb-next", "aria-label": "Next photo", onclick: function () { go(1); } }, "›"));
     document.body.appendChild(overlay); document.addEventListener("keydown", onKey); lbClose = close; show(); x.focus();
   }
-
   function renderPhotos(r) {
-    var list = (r.images || []).filter(function (im) { return im.path; });
+    var list = (r.images || []).filter(function (im) { return im && im.id; });
     if (!list.length) return null;
     var g = el("div", { class: "gallery" });
     list.forEach(function (im, i) {
       g.append(el("figure", {},
-        el("button", { class: "thumb", "aria-label": "Open photo: " + (im.caption || (i + 1)), onclick: function () { openLightbox(list, i); } }, imgEl(im.path, im.caption || "Process photo")),
+        el("button", { class: "thumb", "aria-label": "Open photo: " + (im.caption || (i + 1)), onclick: function () { openLightbox(list, i); } }, imgEl(im.id, im.caption || "Process photo")),
         im.caption ? el("figcaption", {}, im.caption) : null));
     });
     return section("Photos", g);
   }
-
   function photoEditor(draft, rerender) {
     var box = el("div", { class: "card" }, el("h2", {}, "Photos"));
     var status = el("div", { class: "sub", role: "status" });
     var grid = el("div", { class: "photo-edit" });
     function move(i, d) { var t = draft.images[i]; draft.images[i] = draft.images[i + d]; draft.images[i + d] = t; rerender(); }
     draft.images.forEach(function (im, i) {
-      var pic = im._data ? el("img", { src: im._data, alt: im.caption || "New photo" }) : imgEl(im.path, im.caption || "Photo");
+      var pic = im._data ? el("img", { src: im._data, alt: im.caption || "New photo" }) : imgEl(im.id, im.caption || "Photo");
       grid.append(el("div", { class: "pe" }, pic,
         textField("Caption", im, "caption", { ph: "e.g. Dispense pattern" }),
         el("div", { class: "actions" },
@@ -433,86 +349,77 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       status.textContent = "Processing " + files.length + " photo(s)…";
       var chain = Promise.resolve();
       files.forEach(function (f) {
-        chain = chain.then(function () { return resizeImage(f).then(function (d) { draft.images.push({ path: "", caption: "", _data: d }); }); });
+        chain = chain.then(function () { return resizeImage(f).then(function (d) { draft.images.push({ id: "", caption: "", _data: d }); }); });
       });
       chain.then(function () { rerender(); }).catch(function (err) { status.textContent = err.message; rerender(); });
     } });
     box.append(file, el("div", { class: "actions" }, el("button", { onclick: function () { file.click(); } }, "+ Add photos"), status),
-      el("div", { class: "sub", style: "margin-top:8px" }, "Photos are resized to 1600 px and uploaded when you click Save to GitHub. Removing a photo here only unlinks it from the recipe; the file stays in the repo’s images folder."));
+      el("div", { class: "sub", style: "margin-top:8px" }, "Photos are resized and uploaded when you click Save. Removing a photo only unlinks it from the recipe."));
     return box;
   }
 
-  // ---------- login ----------
-  function verifyToken(t) {
-    return fetch("https://api.github.com/repos/" + CFG.owner + "/" + CFG.repo, {
-      headers: { "Accept": "application/vnd.github+json", "Authorization": "Bearer " + t }
-    }).then(function (res) {
-      if (!res.ok) throw httpError(res, "Checking token");
-      return res.json();
-    }).then(function (j) { return !!(j.permissions && j.permissions.push); });
-  }
-  function renderLogin() {
-    loginBox.replaceChildren();
-    if (!showLogin || canEdit) return;
-    var inp = el("input", { type: "password", placeholder: "github_pat_…", autocomplete: "off", "aria-label": "GitHub token" });
-    var msg = el("div", { class: "err", role: "alert" });
-    var go = el("button", { class: "primary", onclick: function () {
-      var t = inp.value.trim(); if (!t) return;
-      go.disabled = true; msg.textContent = "";
-      verifyToken(t).then(function (ok) {
-        if (!ok) { msg.textContent = "This token can read the repo but not write to it."; go.disabled = false; return; }
-        token = t; lsSet("rl-token", t); canEdit = true; showLogin = false; load(); renderTop(); renderLogin();
-      }).catch(function (e) { msg.textContent = explain(e); go.disabled = false; });
-    } }, "Log in");
-    loginBox.append(el("div", { class: "card noprint" }, el("h2", {}, "Editor login"),
-      el("div", { class: "sub", style: "margin-bottom:10px" },
-        "Paste a fine-grained GitHub token limited to " + CFG.owner + "/" + CFG.repo + " with Contents: Read and write. It is stored only in this browser. Never put it in the code or commit it."),
-      el("div", { class: "row" }, el("div", { class: "field" }, inp), go), msg));
-  }
-
-  function renderTop() {
-    topActions.replaceChildren();
-    topActions.append(el("button", { onclick: function () { loaded = false; render(); load(); } }, "Refresh"));
-    if (!canEdit) {
-      topActions.append(el("button", { onclick: function () { showLogin = !showLogin; renderLogin(); } }, "Editor login"));
-      return;
-    }
-    if (!editing) {
-      topActions.append(el("button", { class: "primary", onclick: function () {
-        var d = blank(); d.product = sel.product; d.flavor = sel.flavor;
-        editing = { draft: d, oldId: null }; render(); window.scrollTo(0, 0);
-      } }, "+ New recipe"));
-      topActions.append(el("button", { onclick: downloadBackup }, "Backup JSON"));
-      var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
-      topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import JSON"));
-    }
-    topActions.append(el("button", { onclick: function () { token = ""; canEdit = false; lsDel("rl-token"); editing = null; render(); } }, "Log out"));
-  }
-
+  // ---------- backup / import ----------
   function downloadBackup() {
-    var data = { version: 1, updatedAt: new Date().toISOString(), recipes: recipes.map(function (r) { var o = clone(r); delete o._id; return o; }) };
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-    a.download = "recipe-library-backup-" + new Date().toISOString().slice(0, 10) + ".json";
-    document.body.appendChild(a); a.click(); a.remove();
+    busy = "Preparing backup…"; render();
+    dbGet("images").then(function (imgs) {
+      var data = { version: 2, updatedAt: new Date().toISOString(), recipes: recipes.map(stripLocal), images: imgs || {} };
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
+      a.download = "recipe-library-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+      document.body.appendChild(a); a.click(); a.remove();
+      busy = ""; render();
+    }).catch(function (e) { busy = ""; toast = "Backup failed: " + explain(e); render(); });
+  }
+  function importData(d, askText) {
+    var list = Array.isArray(d) ? d : (d.recipes || []);
+    var imgs = (d && d.images) || {};
+    if (!list.length) { toast = "The file has no recipes."; render(); return Promise.resolve(); }
+    if (!window.confirm(askText || ("Add " + list.length + " recipes? Recipes with the same product/flavor/stage will be replaced."))) return Promise.resolve();
+    busy = "Importing…"; render();
+    var chain = Promise.resolve();
+    list.forEach(function (r0) {
+      chain = chain.then(function () {
+        var r = normRecipe("", r0); r.id = recipeId(r); r._id = r.id;
+        r.images = r.images.filter(function (im) { return im && im.id; });
+        var wr = Promise.resolve();
+        r.images.forEach(function (im) { if (imgs[im.id] && imgs[im.id].data) wr = wr.then(function () { return dbPut("images/" + im.id, imgs[im.id]); }); });
+        return wr.then(function () { return dbPut("recipes/" + r.id, stripLocal(r)); });
+      });
+    });
+    return chain.then(function () { return touchMeta(new Date().toISOString()); }).then(function () {
+      toast = "Imported " + list.length + " recipes."; busy = ""; return load(true);
+    }).catch(function (e) { busy = ""; toast = "Import failed: " + explain(e); render(); });
   }
   function importFile(f) {
     if (!f) return;
-    f.text().then(function (txt) {
-      var d = normalize(JSON.parse(txt));
-      if (!d.recipes.length) { toast = "Import file has no recipes."; render(); return; }
-      if (!window.confirm("Merge " + d.recipes.length + " recipes into the library? Recipes with the same product/flavor/stage will be replaced.")) return;
-      busy = true; render();
-      return commit(function (cur) {
-        d.recipes.forEach(function (r) {
-          r.id = recipeId(r);
-          var i = cur.recipes.findIndex(function (x) { return x.id === r.id; });
-          if (i >= 0) cur.recipes[i] = r; else cur.recipes.push(r);
-        });
-      }, "Import " + d.recipes.length + " recipes").then(function (data) {
-        setRecipes(data.recipes, data.updatedAt); toast = "Imported " + d.recipes.length + " recipes."; busy = false; render();
-      });
-    }).catch(function (e) { busy = false; toast = "Import failed: " + explain(e); render(); });
+    f.text().then(function (t) { return importData(JSON.parse(t)); }).catch(function (e) { toast = "Import failed: " + (e.message || e); render(); });
+  }
+  function loadStarter() {
+    fetch("data.json?t=" + Date.now(), { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("data.json not found"); return r.json(); })
+      .then(function (d) { return importData(d, "Load the starter sample recipes into the database?"); })
+      .catch(function (e) { toast = "Could not load starter data: " + (e.message || e); render(); });
+  }
+
+  // ---------- header ----------
+  function setRole(v) { role = v; lsSet("rl-role", v); if (v !== "editor") { editing = null; confirmDelete = false; } render(); }
+  function renderTop() {
+    topActions.replaceChildren();
+    topActions.append(el("button", { onclick: function () { toast = ""; load(true); } }, "Refresh"));
+    if (!canEdit()) {
+      topActions.append(el("span", { class: "badge" }, "Viewer"), el("button", { onclick: function () { setRole("editor"); } }, "Switch to Editor"));
+      return;
+    }
+    topActions.append(el("span", { class: "badge Released" }, "Editor"));
+    if (!editing && loaded) {
+      topActions.append(el("button", { class: "primary", onclick: function () {
+        var d = blank(); d.product = sel.product; d.flavor = sel.flavor;
+        editing = { draft: d, oldId: null, base: "" }; render(); window.scrollTo(0, 0);
+      } }, "+ New recipe"));
+      topActions.append(el("button", { onclick: downloadBackup }, "Backup"));
+      var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
+      topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import"));
+    }
+    topActions.append(el("button", { onclick: function () { setRole("viewer"); } }, "Switch to Viewer"));
   }
 
   // ---------- derived ----------
@@ -529,16 +436,22 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // ---------- render ----------
   function render() {
-    renderTop(); renderLogin(); renderRev();
+    renderTop(); renderRev();
     app.replaceChildren();
-    if (toast) { app.append(el("div", { class: "note noprint" }, toast, " ", el("button", { class: "small", onclick: function () { toast = ""; render(); } }, "Dismiss"))); }
-    if (busy) { app.append(el("div", { class: "card empty" }, "Saving to GitHub…")); return; }
+    if (toast) app.append(el("div", { class: "note noprint" }, toast, " ", el("button", { class: "small", onclick: function () { toast = ""; render(); } }, "Dismiss")));
+    if (NOT_CONFIGURED) {
+      app.append(el("div", { class: "card" }, el("h2", {}, "One-time setup"),
+        el("p", {}, "Open index.html and replace the DB_URL value near the top with your Firebase Realtime Database URL, then commit the change. The URL looks like https://your-project-default-rtdb.firebaseio.com")));
+      return;
+    }
+    if (busy) { app.append(el("div", { class: "card empty" }, busy)); return; }
     if (loadError) { app.append(el("div", { class: "card empty" }, loadError)); return; }
     if (!loaded) { app.append(el("div", { class: "card empty" }, "Loading recipes…")); return; }
-    if (editing) { app.append(renderEditor()); return; }
+    if (editing && canEdit()) { app.append(renderEditor()); return; }
     if (!recipes.length) {
-      app.append(el("div", { class: "card empty" }, el("div", { style: "font-size:17px;color:var(--text);margin-bottom:6px" }, "No recipes yet"),
-        canEdit ? "Use “New recipe” to add the first one." : "Log in as an editor to add recipes."));
+      app.append(el("div", { class: "card empty" }, el("div", { style: "font-size:17px;color:var(--text);margin-bottom:8px" }, "No recipes yet"),
+        canEdit() ? el("div", {}, "Use “+ New recipe”, or ", el("button", { class: "small", onclick: loadStarter }, "load the starter sample data"))
+                  : "Switch to Editor to add the first recipe."));
       return;
     }
     var d = fixSelection();
@@ -555,7 +468,6 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     s.value = value;
     return el("div", { class: "field" }, el("label", {}, label), s);
   }
-
   function renderPicker(d) {
     var tabs = el("div", { class: "tabs", role: "tablist", "aria-label": "Stage" },
       d.stages.map(function (r) {
@@ -575,10 +487,10 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
             } }))),
       query.trim() ? null : tabs);
   }
-
   function haystack(r) {
     var parts = [r.product, r.flavor, r.stage, r.name, r.notes, r.cure && r.cure.method];
     ["tools", "epoxies", "jigs"].forEach(function (k) { (r[k] || []).forEach(function (it) { parts.push(Object.keys(it).map(function (x) { return it[x]; }).join(" ")); }); });
+    (r.images || []).forEach(function (im) { parts.push(im.caption || ""); });
     return parts.join(" ").toLowerCase();
   }
   function renderSearch() {
@@ -615,7 +527,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
             el("span", { class: "sub" }, "Rev " + (r.rev || "—") + " · revised " + fmtDT(r.updatedAt)))),
         el("div", { class: "actions noprint" },
           el("button", { onclick: function () { window.print(); } }, "Print"),
-          canEdit ? el("button", { onclick: function () { editing = { draft: clone(Object.assign(blank(), r)), oldId: r._id }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
+          canEdit() ? el("button", { onclick: function () { editing = { draft: clone(r), oldId: r._id, base: r.updatedAt || "" }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
     var w = el("div", {}, head);
     if (r.status === "Obsolete") w.append(el("div", { class: "note bad" }, "This recipe is obsolete. Check with process engineering before running it."));
     if (r.status === "Draft") w.append(el("div", { class: "note" }, "Draft recipe, not yet released."));
@@ -632,7 +544,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   function renderCure(c) {
     c = c || {};
-    var segs = (c.segments || []).filter(function (s) { return isFinite(s.temp) && isFinite(s.min) && s.temp !== "" && s.min !== ""; });
+    var segs = toArr(c.segments).filter(function (s) { return s.temp !== "" && s.min !== "" && isFinite(s.temp) && isFinite(s.min); });
     var body = el("div", {}, el("dl", { class: "kv" },
       el("dt", {}, "Method"), el("dd", {}, c.method || "—"),
       el("dt", {}, "Atmosphere"), el("dd", {}, c.atmosphere || "—")));
@@ -644,7 +556,6 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     }
     return section("Curing profile", body);
   }
-
   function profileChart(segs) {
     var W = 560, H = 200, L = 44, R = 12, T = 12, B = 30, amb = 25;
     var pts = [[0, amb]], t = 0;
@@ -699,6 +610,33 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     return box;
   }
 
+  function pruneHistory(id) {
+    return dbGet("history/" + id, "?shallow=true").then(function (keys) {
+      var ks = Object.keys(keys || {}).sort(function (a, b) { return Number(a) - Number(b); });
+      var extra = ks.slice(0, Math.max(0, ks.length - 20));
+      return Promise.all(extra.map(function (k) { return dbDel("history/" + id + "/" + k); }));
+    }).catch(function () {});
+  }
+  // Check for a concurrent change, upload photos, keep the previous version in history, then write.
+  function saveRecipe(out, draft, oldId, base, btn) {
+    var chain = Promise.resolve();
+    if (oldId) chain = chain.then(function () { return dbGet("recipes/" + oldId + "/updatedAt"); }).then(function (remote) {
+      if (remote && remote !== base && !window.confirm("Someone else saved this recipe on " + fmtDT(remote) + " after you opened it.\n\nSave anyway and overwrite their changes?")) {
+        var c = new Error("cancelled"); c.cancelled = true; throw c;
+      }
+    });
+    if (out.id !== oldId) chain = chain.then(function () { return dbGet("recipes/" + out.id + "/updatedAt"); }).then(function (exists) {
+      if (exists) throw new Error("A recipe already exists for this product, flavor and stage. Edit that one instead.");
+    });
+    chain = chain.then(function () { return uploadPending(out, draft, btn); });
+    if (oldId) chain = chain.then(function () { return dbGet("recipes/" + oldId); }).then(function (prev) {
+      if (prev) return dbPut("history/" + oldId + "/" + Date.now(), prev).then(function () { return pruneHistory(oldId); });
+    });
+    chain = chain.then(function () { return dbPut("recipes/" + out.id, out); });
+    if (oldId && oldId !== out.id) chain = chain.then(function () { return dbDel("recipes/" + oldId); });
+    return chain.then(function () { return touchMeta(out.updatedAt); });
+  }
+
   function renderEditor() {
     var draft = editing.draft, oldId = editing.oldId;
     var root = el("div", {});
@@ -711,13 +649,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     var statusSel = el("select", { onchange: function (e) { draft.status = e.target.value; } },
       ["Draft", "Released", "Obsolete"].map(function (s) { return el("option", { value: s }, s); }));
     statusSel.value = draft.status || "Draft";
-    var stepsArea = el("textarea", { style: "min-height:140px", placeholder: "One step per line", value: (draft.steps || []).join("\n"),
+    var stepsArea = el("textarea", { style: "min-height:140px", placeholder: "One step per line", value: toArr(draft.steps).join("\n"),
       oninput: function (e) { draft.steps = e.target.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean); } });
-    if (!draft.images) draft.images = [];
+    ["tools", "epoxies", "jigs", "images", "steps"].forEach(function (k) { draft[k] = toArr(draft[k]); });
     if (!draft.cure) draft.cure = { method: "", atmosphere: "", segments: [] };
-    if (!draft.cure.segments) draft.cure.segments = [];
+    draft.cure.segments = toArr(draft.cure.segments);
 
-    var saveBtn = el("button", { class: "primary", onclick: save }, "Save to GitHub");
+    var saveBtn = el("button", { class: "primary", onclick: save }, "Save");
     function save() {
       errBox.textContent = "";
       if (!String(draft.product).trim() || !String(draft.flavor).trim() || !String(draft.stage).trim() || !String(draft.name).trim()) {
@@ -733,21 +671,15 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       out.updatedAt = new Date().toISOString();
       delete out._id;
       out.id = recipeId(out);
-      if (out.id !== oldId && recipes.some(function (r) { return r._id === out.id; })) {
-        errBox.textContent = "A recipe already exists for this product, flavor and stage. Edit that one instead."; return;
-      }
       saveBtn.disabled = true; saveBtn.textContent = "Saving…";
-      uploadPending(out, draft, saveBtn).then(function () { return commit(function (cur) {
-        if (oldId && oldId !== out.id) cur.recipes = cur.recipes.filter(function (r) { return r.id !== oldId; });
-        var i = cur.recipes.findIndex(function (r) { return r.id === out.id; });
-        if (i >= 0) cur.recipes[i] = out; else cur.recipes.push(out);
-      }, (oldId ? "Update" : "Add") + " recipe: " + out.product + " / " + out.flavor + " / " + out.stage); }).then(function (data) {
-        setRecipes(data.recipes, data.updatedAt);
+      saveRecipe(out, draft, oldId, editing.base, saveBtn).then(function () {
+        recipes = recipes.filter(function (r) { return r._id !== oldId && r._id !== out.id; }).concat([normRecipe(out.id, out)]);
+        libUpdated = out.updatedAt; lastSig = "";
         sel = { product: out.product, flavor: out.flavor, stage: out.stage };
-        editing = null; toast = "Saved to GitHub. Other users see it after the Pages site rebuilds (about a minute) or when they press Refresh while logged in."; render(); window.scrollTo(0, 0);
+        editing = null; toast = "Saved. Everyone sees it within 30 seconds, or when they press Refresh."; render(); window.scrollTo(0, 0);
       }).catch(function (e) {
-        saveBtn.disabled = false; saveBtn.textContent = "Save to GitHub";
-        errBox.textContent = "Not saved: " + explain(e) + " Your edits are still on screen.";
+        saveBtn.disabled = false; saveBtn.textContent = "Save";
+        if (!e.cancelled) errBox.textContent = "Not saved: " + explain(e) + " Your edits are still on screen.";
       });
     }
 
@@ -756,11 +688,35 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       delBtn = el("button", { class: "danger", onclick: function () {
         if (!confirmDelete) { confirmDelete = true; delBtn.textContent = "Click again to delete"; return; }
         delBtn.disabled = true;
-        commit(function (cur) { cur.recipes = cur.recipes.filter(function (r) { return r.id !== oldId; }); }, "Delete recipe " + oldId)
-          .then(function (data) { setRecipes(data.recipes, data.updatedAt); editing = null; confirmDelete = false; render(); })
+        dbGet("recipes/" + oldId).then(function (prev) {
+          return prev ? dbPut("history/" + oldId + "/" + Date.now(), prev) : null;
+        }).then(function () { return dbDel("recipes/" + oldId); })
+          .then(function () { var ts = new Date().toISOString(); libUpdated = ts; return touchMeta(ts); })
+          .then(function () { recipes = recipes.filter(function (r) { return r._id !== oldId; }); lastSig = ""; editing = null; confirmDelete = false; render(); })
           .catch(function (e) { delBtn.disabled = false; errBox.textContent = "Not deleted: " + explain(e); });
       } }, "Delete");
     }
+
+    var histBox = el("div", {});
+    var histBtn = oldId ? el("button", { onclick: function () {
+      histBox.replaceChildren(el("div", { class: "sub" }, "Loading history…"));
+      dbGet("history/" + oldId).then(function (h) {
+        var keys = Object.keys(h || {}).sort(function (a, b) { return Number(b) - Number(a); }).slice(0, 20);
+        if (!keys.length) { histBox.replaceChildren(el("div", { class: "sub" }, "No earlier versions yet.")); return; }
+        var card = el("div", { class: "card" }, el("h2", {}, "Earlier versions"));
+        keys.forEach(function (k) {
+          var v = h[k];
+          card.append(el("div", { class: "hit" },
+            el("span", {}, el("strong", {}, fmtDT(Number(k) ? new Date(Number(k)).toISOString() : "")), " ", el("span", { class: "m" }, "Rev " + (v.rev || "—") + " · " + (v.status || "") + " · " + (v.name || ""))),
+            el("button", { class: "small", onclick: function () {
+              var restored = normRecipe(oldId, v); restored.updatedAt = draft.updatedAt;
+              editing.draft = restored; rerender();
+            } }, "Load into editor")));
+        });
+        card.append(el("div", { class: "sub" }, "Loading a version only fills the form. Nothing changes until you click Save."));
+        histBox.replaceChildren(card);
+      }).catch(function (e) { histBox.replaceChildren(el("div", { class: "err" }, "Could not load history: " + explain(e))); });
+    } }, "Version history") : null;
 
     root.append(dl,
       el("div", { class: "card" }, el("h2", {}, oldId ? "Edit recipe" : "New recipe"),
@@ -785,18 +741,16 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       el("div", { class: "card" }, el("h2", {}, "Procedure"), stepsArea),
       el("div", { class: "card" }, el("h2", {}, "Notes"), textField("", draft, "notes", { area: true })),
       el("div", { class: "actions" }, saveBtn,
-        el("button", { onclick: function () { editing = null; confirmDelete = false; render(); } }, "Cancel"), delBtn),
-      errBox);
+        el("button", { onclick: function () { editing = null; confirmDelete = false; render(); } }, "Cancel"), histBtn, delBtn),
+      errBox, histBox);
     return root;
   }
 
   // ---------- start ----------
   tick(); setInterval(tick, 1000);
   render();
-  if (token) {
-    verifyToken(token).then(function (ok) { canEdit = ok; render(); }).catch(function () {});
-  }
   load();
+  setInterval(function () { if (!document.hidden && loaded && !editing && !busy) load(); }, REFRESH_MS);
   document.addEventListener("visibilitychange", function () { if (!document.hidden && loaded && !editing && !busy) load(); });
 })();
 </script>
