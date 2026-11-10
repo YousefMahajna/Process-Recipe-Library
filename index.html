@@ -22,7 +22,17 @@
 body { margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
-header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+header.top { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; margin-bottom: 14px; }
+header.top .actions { justify-content: flex-end; }
+.clock { text-align: center; line-height: 1.25; }
+.clock-date { font-size: 14px; color: var(--muted); }
+.clock-time { font-size: 26px; font-weight: 700; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.clock-rev { font-size: 12px; color: var(--muted); margin-top: 2px; }
+@media (max-width: 820px) {
+  header.top { grid-template-columns: 1fr; }
+  header.top .actions { justify-content: flex-start; }
+  .clock { order: -1; text-align: left; }
+}
 h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
 .sub { color: var(--muted); font-size: 13px; }
@@ -100,6 +110,11 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       <h1>Process Recipe Library</h1>
       <div class="sub">Product → Flavor → Stage. Tools, epoxies, jigs and curing in one place.</div>
     </div>
+    <div class="clock" aria-label="Current date and time">
+      <div class="clock-date" id="clockDate"></div>
+      <div class="clock-time" id="clockTime"></div>
+      <div class="clock-rev" id="clockRev"></div>
+    </div>
     <div class="actions" id="topActions"></div>
   </header>
   <div id="login"></div>
@@ -169,6 +184,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   var sel = { product: "", flavor: "", stage: "" };
   var query = "";
   var editing = null;
+  var libUpdated = "";
   var loaded = false, loadError = "", busy = false, toast = "";
   var confirmDelete = false, showLogin = false;
   try { var s0 = JSON.parse(lsGet("rl-sel") || "null"); if (s0) sel = s0; } catch (e) {}
@@ -176,6 +192,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   var app = document.getElementById("app");
   var topActions = document.getElementById("topActions");
   var loginBox = document.getElementById("login");
+  var clockDate = document.getElementById("clockDate"), clockTime = document.getElementById("clockTime"), clockRev = document.getElementById("clockRev");
+
+  function fmtDT(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso); if (isNaN(d)) return "—";
+    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  }
+  function tick() {
+    var n = new Date();
+    clockDate.textContent = n.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    clockTime.textContent = n.toLocaleTimeString("en-GB", { hour12: false });
+  }
+  function renderRev() { clockRev.textContent = libUpdated ? "Last revision: " + fmtDT(libUpdated) : ""; }
 
   // ---------- GitHub API layer ----------
   function ghHeaders() {
@@ -230,8 +259,10 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     return d;
   }
 
-  function setRecipes(list) {
+  function setRecipes(list, ts) {
     recipes = list.map(function (r) { var o = clone(r); o._id = o.id; return o; });
+    var newest = recipes.reduce(function (m, r) { return r.updatedAt && r.updatedAt > m ? r.updatedAt : m; }, "");
+    libUpdated = (ts && ts > newest) ? ts : (newest || ts || "");
   }
 
   function load() {
@@ -242,7 +273,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       return pagesGet();
     }) : pagesGet();
     return p.then(function (d) {
-      setRecipes(d.recipes); loaded = true; render();
+      setRecipes(d.recipes, d.updatedAt); loaded = true; render();
     }).catch(function (e) {
       loadError = (location.protocol === "file:")
         ? "Open this page from GitHub Pages (or a local web server). Browsers block loading data.json from a file:// page."
@@ -479,7 +510,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
           if (i >= 0) cur.recipes[i] = r; else cur.recipes.push(r);
         });
       }, "Import " + d.recipes.length + " recipes").then(function (data) {
-        setRecipes(data.recipes); toast = "Imported " + d.recipes.length + " recipes."; busy = false; render();
+        setRecipes(data.recipes, data.updatedAt); toast = "Imported " + d.recipes.length + " recipes."; busy = false; render();
       });
     }).catch(function (e) { busy = false; toast = "Import failed: " + explain(e); render(); });
   }
@@ -498,7 +529,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // ---------- render ----------
   function render() {
-    renderTop(); renderLogin();
+    renderTop(); renderLogin(); renderRev();
     app.replaceChildren();
     if (toast) { app.append(el("div", { class: "note noprint" }, toast, " ", el("button", { class: "small", onclick: function () { toast = ""; render(); } }, "Dismiss"))); }
     if (busy) { app.append(el("div", { class: "card empty" }, "Saving to GitHub…")); return; }
@@ -581,7 +612,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
           el("div", { class: "crumbs" }, r.product + " › " + r.flavor + " › " + r.stage),
           el("h3", {}, r.name || r.stage),
           el("div", {}, el("span", { class: "badge " + (r.status || "") }, r.status || "—"), " ",
-            el("span", { class: "sub" }, "Rev " + (r.rev || "—") + (r.updatedAt ? " · updated " + new Date(r.updatedAt).toLocaleDateString() : "")))),
+            el("span", { class: "sub" }, "Rev " + (r.rev || "—") + " · revised " + fmtDT(r.updatedAt)))),
         el("div", { class: "actions noprint" },
           el("button", { onclick: function () { window.print(); } }, "Print"),
           canEdit ? el("button", { onclick: function () { editing = { draft: clone(Object.assign(blank(), r)), oldId: r._id }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
@@ -711,7 +742,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         var i = cur.recipes.findIndex(function (r) { return r.id === out.id; });
         if (i >= 0) cur.recipes[i] = out; else cur.recipes.push(out);
       }, (oldId ? "Update" : "Add") + " recipe: " + out.product + " / " + out.flavor + " / " + out.stage); }).then(function (data) {
-        setRecipes(data.recipes);
+        setRecipes(data.recipes, data.updatedAt);
         sel = { product: out.product, flavor: out.flavor, stage: out.stage };
         editing = null; toast = "Saved to GitHub. Other users see it after the Pages site rebuilds (about a minute) or when they press Refresh while logged in."; render(); window.scrollTo(0, 0);
       }).catch(function (e) {
@@ -726,7 +757,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         if (!confirmDelete) { confirmDelete = true; delBtn.textContent = "Click again to delete"; return; }
         delBtn.disabled = true;
         commit(function (cur) { cur.recipes = cur.recipes.filter(function (r) { return r.id !== oldId; }); }, "Delete recipe " + oldId)
-          .then(function (data) { setRecipes(data.recipes); editing = null; confirmDelete = false; render(); })
+          .then(function (data) { setRecipes(data.recipes, data.updatedAt); editing = null; confirmDelete = false; render(); })
           .catch(function (e) { delBtn.disabled = false; errBox.textContent = "Not deleted: " + explain(e); });
       } }, "Delete");
     }
@@ -760,6 +791,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
 
   // ---------- start ----------
+  tick(); setInterval(tick, 1000);
   render();
   if (token) {
     verifyToken(token).then(function (ok) { canEdit = ok; render(); }).catch(function () {});
