@@ -28,6 +28,8 @@ header.top .actions { justify-content: flex-end; }
 .clock-date { font-size: 14px; color: var(--muted); }
 .clock-time { font-size: 26px; font-weight: 700; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
 .clock-rev { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.app-version { font-size: 12px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+.clock-zone { font-size: 11px; color: var(--muted); margin-top: 2px; }
 @media (max-width: 820px) {
   header.top { grid-template-columns: 1fr; }
   header.top .actions { justify-content: flex-start; }
@@ -108,10 +110,12 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     <div>
       <h1>Process Recipe Library</h1>
       <div class="sub">Product → Flavor → Stage. Tools, epoxies, jigs and curing in one place.</div>
+      <div class="app-version" id="appVersion" aria-label="Application version"></div>
     </div>
     <div class="clock" aria-label="Current date and time">
-      <div class="clock-date" id="clockDate"></div>
-      <div class="clock-time" id="clockTime"></div>
+      <time class="clock-date" id="clockDate" style="display:block"></time>
+      <time class="clock-time" id="clockTime" style="display:block"></time>
+      <div class="clock-zone" id="clockZone"></div>
       <div class="clock-rev" id="clockRev"></div>
     </div>
     <div class="actions" id="topActions"></div>
@@ -119,9 +123,14 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
+<script src="library-core.js"></script>
 <script>
 (function () {
   "use strict";
+
+  // Application release only: increment the letter for each release on the same date.
+  // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
+  var APP_BUILD = { date: '2026-11-15', letter: 'a' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -134,6 +143,95 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   var NOT_CONFIGURED = /YOUR-PROJECT/.test(DB_URL);
   var REFRESH_MS = 30000;
   var MAX_PHOTOS = 12;
+  var core = RecipeLibrary, store = core.createStore(BASE);
+  var writing = false, syncError = '', lastSync = '', backupDir = null, backupMessage = '';
+  var backupChain = Promise.resolve();
+  var DRAFT_PREFIX = 'process-recipe-library-draft-v3';
+  var tabId;
+  try { tabId = sessionStorage.getItem(DRAFT_PREFIX); if (!tabId) { tabId = crypto.randomUUID(); sessionStorage.setItem(DRAFT_PREFIX, tabId); } }
+  catch (e) { tabId = crypto.randomUUID(); }
+  var RECOVERY_KEY = DRAFT_PREFIX + '-' + tabId;
+  function rememberDraft() {
+    if (!editing) return;
+    try { localStorage.setItem(RECOVERY_KEY, JSON.stringify(editing)); }
+    catch (e) { backupMessage = 'Browser could not keep a recovery draft. Use Download draft before leaving.'; }
+  }
+  document.addEventListener('input', function () { if (editing) rememberDraft(); });
+  window.addEventListener('beforeunload', function (e) {
+    if (editing || writing) { rememberDraft(); e.preventDefault(); e.returnValue = ''; }
+  });
+  function forgetDraft() { try { localStorage.removeItem(RECOVERY_KEY); } catch (e) {} }
+  function showDrafts() {
+    var dialog = el('dialog', { style: 'max-width:700px;width:95%;background:var(--surface);color:var(--text)' }, el('h2', {}, 'Browser recovery drafts'));
+    var count = 0;
+    try {
+      Object.keys(localStorage).filter(function (k) { return k.indexOf(DRAFT_PREFIX) === 0; }).forEach(function (k) {
+        var saved;
+        try { saved = JSON.parse(localStorage.getItem(k)); } catch (e) { return; }
+        if (!saved || !saved.draft) return;
+        count++;
+        dialog.append(el('button', { class: 'hit', onclick: function () {
+          editing = clone(saved); rememberDraft(); dialog.close(); dialog.remove(); render();
+        } }, saved.draft.product + ' · ' + (saved.draft.name || 'Unnamed draft')));
+      });
+    } catch (e) { dialog.append(el('div', {}, 'Browser draft storage is unavailable.')); }
+    if (!count) dialog.append(el('div', {}, 'No browser recovery drafts.'));
+    dialog.append(el('button', { onclick: function () { dialog.close(); dialog.remove(); } }, 'Close'));
+    document.body.append(dialog); dialog.showModal();
+  }
+  function downloadJSON(data, name) {
+    var a = document.createElement('a'), u = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(u); }, 10000);
+  }
+  function exportSnapshot(data) { return { version: 3, exportedAt: new Date().toISOString(), databaseRoot: ROOT, data: data }; }
+  function writeBackup(data) {
+    if (!backupDir) return Promise.resolve();
+    var dir = backupDir;
+    backupChain = backupChain.then(async function () {
+      var f = await dir.getFileHandle('recipe-library-' + new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomUUID() + '.json', { create: true });
+      var w = await f.createWritable(); await w.write(JSON.stringify(exportSnapshot(data), null, 2)); await w.close();
+      backupMessage = 'External file backup saved: ' + fmtDT(new Date().toISOString());
+    }).catch(function (e) { backupMessage = 'DATABASE SAVED, but external file backup failed: ' + e.message + '. Use Backup to download a copy.'; });
+    return backupChain;
+  }
+  async function chooseBackupFolder() {
+    try {
+      if (!window.showDirectoryPicker) throw new Error('Folder backups are unavailable in this browser. Use Backup to download JSON files.');
+      backupDir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'recipe-library-backups' });
+      var snap = await store.read(); await writeBackup(snap.data); render();
+    } catch (e) { if (e.name !== 'AbortError') { backupMessage = e.message; render(); } }
+  }
+  async function afterCommit(data) {
+    await writeBackup(data);
+    recipes = Object.keys(data.recipes || {}).map(function (id) { return normRecipe(id, data.recipes[id]); });
+    libUpdated = (data.meta || {}).updatedAt || ''; lastSig = ''; lastSync = new Date().toISOString(); syncError = '';
+  }
+  function lockEditor(locked) {
+    app.querySelectorAll('input,select,textarea,button').forEach(function (e) {
+      if (locked) { e.dataset.wasDisabled = e.disabled ? 'yes' : 'no'; e.disabled = true; }
+      else if (e.dataset.wasDisabled) { e.disabled = e.dataset.wasDisabled === 'yes'; delete e.dataset.wasDisabled; }
+    });
+  }
+  async function restoreDeleted() {
+    if (writing || busy) return;
+    try {
+      var snap = await store.read(), deleted = snap.data.deleted || {}, ids = Object.keys(deleted);
+      if (!ids.length) { toast = 'No deleted recipes.'; render(); return; }
+      var dialog = el('dialog', { style: 'max-width:700px;width:95%;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px' }, el('h2', {}, 'Deleted recipes'));
+      ids.forEach(function (id) {
+        var r = deleted[id].recipe;
+        dialog.append(el('button', { class: 'hit', onclick: async function () {
+          dialog.close(); dialog.remove(); writing = true; busy = 'Restoring recipe…'; render();
+          try { await afterCommit(await store.restore(id, core.token(deleted[id]))); toast = 'Recipe restored.'; }
+          catch (e) { toast = 'Restore stopped: ' + explain(e); }
+          finally { writing = false; busy = ''; render(); }
+        } }, r.product + ' · ' + core.flavorLabel(r) + ' · ' + r.name));
+      });
+      dialog.append(el('button', { onclick: function () { dialog.close(); dialog.remove(); } }, 'Close'));
+      document.body.append(dialog); dialog.showModal();
+    } catch (e) { toast = 'Could not load deleted recipes: ' + explain(e); render(); }
+  }
 
   // ---------- helpers ----------
   function el(tag, attrs) {
@@ -177,10 +275,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     ["tools", "epoxies", "jigs", "steps", "images"].forEach(function (k) { o[k] = toArr(o[k]); });
     o.cure = Object.assign({ method: "", atmosphere: "", segments: [] }, o.cure || {});
     o.cure.segments = toArr(o.cure.segments);
-    o.id = id || recipeId(o); o._id = o.id;
+    o.flavors = core.flavors(o); o.allFlavors = o.allFlavors === true;
+    o.flavor = core.flavorLabel(o);
+    o.id = id || o.id || recipeId(o); o._id = o.id;
+    o._base = core.token(r);
     return o;
   }
-  function stripLocal(r) { var o = clone(r); delete o._id; return o; }
+  function stripLocal(r) { return core.clean(r); }
 
   function fmtDT(iso) {
     if (!iso) return "—";
@@ -205,8 +306,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     var n = new Date();
     clockDate.textContent = n.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
     clockTime.textContent = n.toLocaleTimeString("en-GB", { hour12: false });
+    clockDate.dateTime = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
+    clockTime.dateTime = n.toISOString();
+    document.getElementById('clockZone').textContent = 'Local time · ' + Intl.DateTimeFormat().resolvedOptions().timeZone;
   }
-  function renderRev() { clockRev.textContent = libUpdated ? "Last revision: " + fmtDT(libUpdated) : ""; }
+  function renderRev() {
+    var parts = APP_BUILD.date.split('-');
+    var version = parts[2] + '.' + parts[1] + '.' + parts[0].slice(-2) + APP_BUILD.letter;
+    var releaseDate = new Date(APP_BUILD.date + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    var label = document.getElementById('appVersion');
+    label.textContent = 'App version: Rev ' + version + ' · Updated ' + releaseDate;
+    label.title = 'Website build revision. Changes only when a new application version is released.';
+    clockRev.textContent = libUpdated ? 'Data last updated: ' + fmtDT(libUpdated) : 'Data last updated: —';
+  }
 
   // ---------- database layer (Firebase Realtime Database REST) ----------
   function dbReq(method, path, body, query) {
@@ -218,16 +330,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     });
   }
   function dbGet(p, q) { return dbReq("GET", p, undefined, q); }
-  function dbPut(p, v) { return dbReq("PUT", p, v); }
-  function dbDel(p) { return dbReq("DELETE", p); }
   function explain(e) {
     if (e.cancelled) return "";
-    if (e.status === 401 || e.status === 403) return "The database refused access. In Firebase → Realtime Database → Rules, allow read and write for this app.";
+    if (e.status === 401 || e.status === 403) return "Database access was refused. Ask the database administrator to configure authenticated access; do not enable public writes.";
     if (e.status === 404) return "Database not found. Check DB_URL at the top of index.html.";
     if (e.name === "TypeError") return "Cannot reach the database. Check your network connection and DB_URL.";
     return e.message || "Unknown error";
   }
-  function touchMeta(ts) { return dbPut("meta/updatedAt", ts); }
 
   function load(force) {
     if (NOT_CONFIGURED) return Promise.resolve();
@@ -238,10 +347,14 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       var ts = (r[1] && r[1] > newest) ? r[1] : (newest || r[1] || "");
       var sig = JSON.stringify([list, ts]);
       var first = !loaded;
-      loaded = true; loadError = "";
-      if (first || force || sig !== lastSig) { recipes = list; libUpdated = ts; lastSig = sig; render(); }
+      if (writing) return;
+      loaded = true; loadError = ''; syncError = ''; lastSync = new Date().toISOString();
+      if (first || force || sig !== lastSig) { recipes = list; libUpdated = ts; lastSig = sig; }
+      if (first || !editing) render(); else { renderRev(); renderTop(); }
     }).catch(function (e) {
-      if (!loaded) { loadError = "Could not load recipes: " + explain(e); render(); }
+      syncError = 'Cannot sync. Displayed recipes may be out of date. ' + explain(e);
+      if (!loaded) loadError = syncError;
+      render();
     });
   }
 
@@ -281,21 +394,14 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     else getImage(id).then(function (u) { i.src = u; }).catch(function () { i.classList.add("broken"); });
     return i;
   }
-  function uploadPending(out, draft, btn) {
-    var todo = [];
-    draft.images.forEach(function (im, i) { if (im._data && !im.id) todo.push(i); });
-    var chain = Promise.resolve(), n = 0;
-    todo.forEach(function (i) {
-      chain = chain.then(function () {
-        n++; btn.textContent = "Uploading photo " + n + "/" + todo.length + "…";
-        var id = "img-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
-        return dbPut("images/" + id, { data: draft.images[i]._data }).then(function () { draft.images[i].id = id; imgCache[id] = draft.images[i]._data; });
-      });
+  function preparePhotos(out, draft) {
+    var photos = {};
+    out.images = draft.images.map(function (im) {
+      var id = im.id;
+      if (!id && im._data) { id = 'img-' + crypto.randomUUID(); photos[id] = { data: im._data }; }
+      return { id: id, caption: String(im.caption || '').trim() };
     });
-    return chain.then(function () {
-      btn.textContent = "Saving…";
-      out.images = draft.images.filter(function (im) { return im.id; }).map(function (im) { return { id: im.id, caption: String(im.caption || "").trim() }; });
-    });
+    return photos;
   }
 
   var lbClose = null;
@@ -346,12 +452,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       var files = Array.prototype.slice.call(e.target.files); e.target.value = "";
       if (!files.length) return;
       if (draft.images.length + files.length > MAX_PHOTOS) { status.textContent = "Up to " + MAX_PHOTOS + " photos per recipe."; return; }
-      status.textContent = "Processing " + files.length + " photo(s)…";
+      status.textContent = 'Processing ' + files.length + ' photo(s)…';
+      writing = true; lockEditor(true); renderTop();
       var chain = Promise.resolve();
       files.forEach(function (f) {
         chain = chain.then(function () { return resizeImage(f).then(function (d) { draft.images.push({ id: "", caption: "", _data: d }); }); });
       });
-      chain.then(function () { rerender(); }).catch(function (err) { status.textContent = err.message; rerender(); });
+      chain.then(function () { writing = false; renderTop(); rememberDraft(); rerender(); }).catch(function (err) { writing = false; backupMessage = err.message; rememberDraft(); render(); });
     } });
     box.append(file, el("div", { class: "actions" }, el("button", { onclick: function () { file.click(); } }, "+ Add photos"), status),
       el("div", { class: "sub", style: "margin-top:8px" }, "Photos are resized and uploaded when you click Save. Removing a photo only unlinks it from the recipe."));
@@ -359,37 +466,37 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
 
   // ---------- backup / import ----------
-  function downloadBackup() {
-    busy = "Preparing backup…"; render();
-    dbGet("images").then(function (imgs) {
-      var data = { version: 2, updatedAt: new Date().toISOString(), recipes: recipes.map(stripLocal), images: imgs || {} };
-      var a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
-      a.download = "recipe-library-backup-" + new Date().toISOString().slice(0, 10) + ".json";
-      document.body.appendChild(a); a.click(); a.remove();
-      busy = ""; render();
-    }).catch(function (e) { busy = ""; toast = "Backup failed: " + explain(e); render(); });
+  async function downloadBackup() {
+    if (writing || busy) return;
+    busy = 'Preparing complete backup…'; render();
+    try { var snap = await store.read(); downloadJSON(exportSnapshot(snap.data), 'recipe-library-backup-' + Date.now() + '.json'); }
+    catch (e) { toast = 'Backup failed: ' + explain(e); }
+    finally { busy = ''; render(); }
   }
-  function importData(d, askText) {
-    var list = Array.isArray(d) ? d : (d.recipes || []);
-    var imgs = (d && d.images) || {};
-    if (!list.length) { toast = "The file has no recipes."; render(); return Promise.resolve(); }
-    if (!window.confirm(askText || ("Add " + list.length + " recipes? Recipes with the same product/flavor/stage will be replaced."))) return Promise.resolve();
-    busy = "Importing…"; render();
-    var chain = Promise.resolve();
-    list.forEach(function (r0) {
-      chain = chain.then(function () {
-        var r = normRecipe("", r0); r.id = recipeId(r); r._id = r.id;
-        r.images = r.images.filter(function (im) { return im && im.id; });
-        var wr = Promise.resolve();
-        r.images.forEach(function (im) { if (imgs[im.id] && imgs[im.id].data) wr = wr.then(function () { return dbPut("images/" + im.id, imgs[im.id]); }); });
-        return wr.then(function () { return dbPut("recipes/" + r.id, stripLocal(r)); });
-      });
-    });
-    return chain.then(function () { return touchMeta(new Date().toISOString()); }).then(function () {
-      toast = "Imported " + list.length + " recipes."; busy = ""; return load(true);
-    }).catch(function (e) { busy = ""; toast = "Import failed: " + explain(e); render(); });
+  async function importData(d, askText) {
+    if (writing || busy) return;
+    try {
+      if (!d || typeof d !== 'object') throw new Error('Invalid backup file.');
+      if (d.version && ![1,2,3].includes(d.version)) throw new Error('Unsupported backup version.');
+      var source = d.version === 3 ? d.data : d;
+      if (!source || typeof source !== 'object') throw new Error('Invalid backup data.');
+      var raw = Array.isArray(source) ? source : source.recipes;
+      var list = Array.isArray(raw) ? raw.map(function (r) { return normRecipe(r.id || recipeId(r), r); }) : Object.keys(raw || {}).map(function (id) { return normRecipe(id, raw[id]); });
+      if (!list.length && !Object.keys(source.history || {}).length && !Object.keys(source.deleted || {}).length) throw new Error('The file has no recipes or recovery history.');
+      list.forEach(core.validate);
+      var snap = await store.read(), expected = {};
+      list.forEach(function (r) { expected[r.id] = core.token((snap.data.recipes || {})[r.id]); });
+      var replaced = list.filter(function (r) { return expected[r.id] !== 'null'; }).length;
+      if (!window.confirm((askText || 'Import this backup?') + '\n' + list.length + ' recipes; ' + replaced + ' existing recipes will be replaced with their previous versions retained in history. Other recipes stay in the library.')) return;
+      // Download the fresh pre-import snapshot before making any replacement.
+      downloadJSON(exportSnapshot(snap.data), 'recipe-library-before-import-' + Date.now() + '.json');
+      busy = 'Importing…'; writing = true; render();
+      var data = await store.merge(list, source.images || {}, expected, source.history, source.deleted);
+      await afterCommit(data); toast = 'Import completed. Previous versions were retained.';
+    } catch (e) { toast = 'Import stopped: ' + explain(e); }
+    finally { busy = ''; writing = false; render(); }
   }
+
   function importFile(f) {
     if (!f) return;
     f.text().then(function (t) { return importData(JSON.parse(t)); }).catch(function (e) { toast = "Import failed: " + (e.message || e); render(); });
@@ -401,9 +508,10 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
 
   // ---------- header ----------
-  function setRole(v) { role = v; lsSet("rl-role", v); if (v !== "editor") { editing = null; confirmDelete = false; } render(); }
+  function setRole(v) { if (editing && v !== 'editor' && !window.confirm('Leave the editor? The recovery draft will be kept.')) return; role = v; lsSet("rl-role", v); if (v !== "editor") { editing = null; confirmDelete = false; } render(); }
   function renderTop() {
     topActions.replaceChildren();
+    if (writing || busy) { topActions.append(el('span', { role: 'status' }, busy || 'Saving / processing photos…')); return; }
     topActions.append(el("button", { onclick: function () { toast = ""; load(true); } }, "Refresh"));
     if (!canEdit()) {
       topActions.append(el("span", { class: "badge" }, "Viewer"), el("button", { onclick: function () { setRole("editor"); } }, "Switch to Editor"));
@@ -412,10 +520,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     topActions.append(el("span", { class: "badge Released" }, "Editor"));
     if (!editing && loaded) {
       topActions.append(el("button", { class: "primary", onclick: function () {
-        var d = blank(); d.product = sel.product; d.flavor = sel.flavor;
+        var d = blank(); d.product = sel.product; d.flavor = sel.flavor === 'All flavors' ? '' : sel.flavor; d.allFlavors = sel.flavor === 'All flavors';
         editing = { draft: d, oldId: null, base: "" }; render(); window.scrollTo(0, 0);
       } }, "+ New recipe"));
-      topActions.append(el("button", { onclick: downloadBackup }, "Backup"));
+      topActions.append(el('button', { onclick: downloadBackup }, 'Backup'));
+      topActions.append(el('button', { onclick: chooseBackupFolder }, backupDir ? 'Change backup folder' : 'Choose backup folder'));
+      topActions.append(el('button', { onclick: restoreDeleted }, 'Deleted recipes'));
+      topActions.append(el('button', { onclick: showDrafts }, 'Recover draft'));
       var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
       topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import"));
     }
@@ -426,11 +537,15 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function fixSelection() {
     var products = uniq(recipes.map(function (r) { return r.product; })).sort(cmp);
     if (products.indexOf(sel.product) < 0) sel.product = products[0] || "";
-    var flavors = uniq(recipes.filter(function (r) { return r.product === sel.product; }).map(function (r) { return r.flavor; })).sort(cmp);
+    var productRecipes = recipes.filter(function (r) { return r.product === sel.product; });
+    var flavors = uniq([].concat.apply([], productRecipes.map(function (r) { return r.allFlavors ? [] : r.flavors; }))).sort(cmp);
+    if (productRecipes.some(function (r) { return r.allFlavors; })) flavors.push('All flavors');
     if (flavors.indexOf(sel.flavor) < 0) sel.flavor = flavors[0] || "";
-    var stages = recipes.filter(function (r) { return r.product === sel.product && r.flavor === sel.flavor; })
+    var stages = recipes.filter(function (r) { return r.product === sel.product && (core.applies(r, sel.flavor)); })
       .sort(function (a, b) { return (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage); });
-    if (!stages.some(function (r) { return r.stage === sel.stage; })) sel.stage = stages[0] ? stages[0].stage : "";
+    if (!stages.some(function (r) { return r.id === sel.recipeId; })) sel.recipeId = stages[0] ? stages[0].id : '';
+    var selected = stages.find(function (r) { return r.id === sel.recipeId; });
+    sel.stage = selected ? selected.stage : '';
     return { products: products, flavors: flavors, stages: stages };
   }
 
@@ -438,6 +553,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function render() {
     renderTop(); renderRev();
     app.replaceChildren();
+    if (syncError) app.append(el('div', { class: 'note bad', role: 'alert' }, syncError));
+    app.append(el('div', { class: 'sub noprint', style: 'margin-bottom:10px' }, 'Shared database · Last sync: ' + fmtDT(lastSync) + ' · ' + (backupMessage || (backupDir ? 'Folder backup connected for this session' : 'External file backup not connected. Choose a backup folder or download Backup.'))));
     if (toast) app.append(el("div", { class: "note noprint" }, toast, " ", el("button", { class: "small", onclick: function () { toast = ""; render(); } }, "Dismiss")));
     if (NOT_CONFIGURED) {
       app.append(el("div", { class: "card" }, el("h2", {}, "One-time setup"),
@@ -458,22 +575,22 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     lsSet("rl-sel", JSON.stringify(sel));
     app.append(renderPicker(d));
     if (query.trim()) { app.append(renderSearch()); return; }
-    var cur = d.stages.filter(function (r) { return r.stage === sel.stage; })[0];
+    var cur = d.stages.filter(function (r) { return r.id === sel.recipeId; })[0];
     app.append(cur ? renderRecipe(cur) : el("div", { class: "card empty" }, "No recipe for this selection."));
   }
 
   function selectField(label, value, options, onchange) {
     var s = el("select", { onchange: function (e) { onchange(e.target.value); } },
       options.map(function (o) { return el("option", { value: o }, o); }));
-    s.value = value;
-    return el("div", { class: "field" }, el("label", {}, label), s);
+    s.value = value; s.id = 'field-' + crypto.randomUUID();
+    return el("div", { class: "field" }, el("label", { for: s.id }, label), s);
   }
   function renderPicker(d) {
     var tabs = el("div", { class: "tabs", role: "tablist", "aria-label": "Stage" },
       d.stages.map(function (r) {
-        return el("button", { class: "tab", role: "tab", "aria-selected": String(r.stage === sel.stage),
-          onclick: function () { sel.stage = r.stage; render(); } },
-          el("span", { class: "n" }, String(r.stageOrder || "")), r.stage);
+        return el("button", { class: "tab", role: "tab", "aria-selected": String(r.id === sel.recipeId),
+          onclick: function () { sel.stage = r.stage; sel.recipeId = r.id; render(); } },
+          el("span", { class: "n" }, String(r.stageOrder || "")), r.stage + (d.stages.filter(function (x) { return x.stage === r.stage; }).length > 1 ? " · " + r.name + " (" + r.flavor + ")" : ""));
       }));
     return el("div", { class: "card noprint" },
       el("div", { class: "row" },
@@ -499,7 +616,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       .sort(function (a, b) { return cmp(a.product, b.product) || cmp(a.flavor, b.flavor) || (a.stageOrder || 0) - (b.stageOrder || 0); });
     var box = el("div", { class: "card" }, el("h2", {}, hits.length + " match" + (hits.length === 1 ? "" : "es")));
     hits.forEach(function (r) {
-      box.append(el("button", { class: "hit", onclick: function () { sel.product = r.product; sel.flavor = r.flavor; sel.stage = r.stage; query = ""; render(); } },
+      box.append(el("button", { class: "hit", onclick: function () { sel.product = r.product; sel.flavor = r.allFlavors ? 'All flavors' : r.flavors[0]; sel.stage = r.stage; sel.recipeId = r.id; query = ''; render(); } },
         el("span", {}, el("strong", {}, r.name || r.stage)), el("span", { class: "m" }, r.product + " · " + r.flavor + " · " + r.stage)));
     });
     return box;
@@ -527,7 +644,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
             el("span", { class: "sub" }, "Rev " + (r.rev || "—") + " · revised " + fmtDT(r.updatedAt)))),
         el("div", { class: "actions noprint" },
           el("button", { onclick: function () { window.print(); } }, "Print"),
-          canEdit() ? el("button", { onclick: function () { editing = { draft: clone(r), oldId: r._id, base: r.updatedAt || "" }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
+          canEdit() ? el("button", { onclick: function () { editing = { draft: clone(r), oldId: r._id, base: r._base }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
     var w = el("div", {}, head);
     if (r.status === "Obsolete") w.append(el("div", { class: "note bad" }, "This recipe is obsolete. Check with process engineering before running it."));
     if (r.status === "Draft") w.append(el("div", { class: "note" }, "Draft recipe, not yet released."));
@@ -597,7 +714,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     var input = el(opts.area ? "textarea" : "input", { type: opts.number ? "number" : "text", value: obj[key] == null ? "" : obj[key], placeholder: opts.ph || "",
       list: opts.list,
       oninput: function (e) { obj[key] = opts.number ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value; } });
-    return el("div", { class: "field", style: opts.style }, label ? el("label", {}, label) : null, input);
+    input.id = 'field-' + crypto.randomUUID();
+    return el("div", { class: "field", style: opts.style }, label ? el("label", { for: input.id }, label) : null, input);
   }
   function listEditor(title, arr, fields, rerender) {
     var box = el("div", { class: "card" }, el("h2", {}, title));
@@ -610,38 +728,23 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     return box;
   }
 
-  function pruneHistory(id) {
-    return dbGet("history/" + id, "?shallow=true").then(function (keys) {
-      var ks = Object.keys(keys || {}).sort(function (a, b) { return Number(a) - Number(b); });
-      var extra = ks.slice(0, Math.max(0, ks.length - 20));
-      return Promise.all(extra.map(function (k) { return dbDel("history/" + id + "/" + k); }));
-    }).catch(function () {});
-  }
-  // Check for a concurrent change, upload photos, keep the previous version in history, then write.
-  function saveRecipe(out, draft, oldId, base, btn) {
-    var chain = Promise.resolve();
-    if (oldId) chain = chain.then(function () { return dbGet("recipes/" + oldId + "/updatedAt"); }).then(function (remote) {
-      if (remote && remote !== base && !window.confirm("Someone else saved this recipe on " + fmtDT(remote) + " after you opened it.\n\nSave anyway and overwrite their changes?")) {
-        var c = new Error("cancelled"); c.cancelled = true; throw c;
-      }
-    });
-    if (out.id !== oldId) chain = chain.then(function () { return dbGet("recipes/" + out.id + "/updatedAt"); }).then(function (exists) {
-      if (exists) throw new Error("A recipe already exists for this product, flavor and stage. Edit that one instead.");
-    });
-    chain = chain.then(function () { return uploadPending(out, draft, btn); });
-    if (oldId) chain = chain.then(function () { return dbGet("recipes/" + oldId); }).then(function (prev) {
-      if (prev) return dbPut("history/" + oldId + "/" + Date.now(), prev).then(function () { return pruneHistory(oldId); });
-    });
-    chain = chain.then(function () { return dbPut("recipes/" + out.id, out); });
-    if (oldId && oldId !== out.id) chain = chain.then(function () { return dbDel("recipes/" + oldId); });
-    return chain.then(function () { return touchMeta(out.updatedAt); });
+  async function saveRecipe(out, draft, oldId, base) {
+    var photos = preparePhotos(out, draft);
+    core.validate(out);
+    var data = await store.save(out, oldId ? base : 'null', photos);
+    await afterCommit(data);
   }
 
   function renderEditor() {
     var draft = editing.draft, oldId = editing.oldId;
     var root = el("div", {});
     var errBox = el("div", { class: "err", role: "alert" });
-    function rerender() { var n = renderEditor(); root.replaceWith(n); root = n; }
+    function rerender() { rememberDraft(); var n = renderEditor(); root.replaceWith(n); root = n; }
+    root.addEventListener('click', function (e) { if (writing) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+    var flavorInput = textField('Flavors (separate with commas)', draft, 'flavor', { ph: 'e.g. Flavor A, Flavor B' });
+    var allBox = el('input', { type: 'checkbox', style: 'width:auto;min-height:0', checked: draft.allFlavors,
+      onchange: function (e) { draft.allFlavors = e.target.checked; rerender(); } });
+    if (draft.allFlavors) flavorInput.querySelector('input').disabled = true;
     var dl = el("div", {},
       el("datalist", { id: "dl-products" }, uniq(recipes.map(function (r) { return r.product; })).map(function (v) { return el("option", { value: v }); })),
       el("datalist", { id: "dl-flavors" }, uniq(recipes.map(function (r) { return r.flavor; })).map(function (v) { return el("option", { value: v }); })),
@@ -657,28 +760,36 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
     var saveBtn = el("button", { class: "primary", onclick: save }, "Save");
     function save() {
-      errBox.textContent = "";
-      if (!String(draft.product).trim() || !String(draft.flavor).trim() || !String(draft.stage).trim() || !String(draft.name).trim()) {
+      if (writing) return;
+      errBox.textContent = '';
+      if (!String(draft.product).trim() || (!draft.allFlavors && !String(draft.flavor).trim()) || !String(draft.stage).trim() || !String(draft.name).trim()) {
         errBox.textContent = "Product, flavor, stage and recipe name are required."; return;
       }
       var out = clone(draft);
       ["tools", "epoxies", "jigs"].forEach(function (k) {
         out[k] = (out[k] || []).filter(function (it) { return Object.keys(it).some(function (x) { return String(it[x]).trim(); }); });
       });
-      out.cure.segments = (out.cure.segments || []).filter(function (s) { return s.temp !== "" && s.min !== ""; });
+      out.cure.segments = out.cure.segments || [];
+      out.flavors = core.flavors({ flavor: draft.flavor });
+      out.allFlavors = draft.allFlavors === true;
+      out.flavor = core.flavorLabel(out);
       out.product = out.product.trim(); out.flavor = out.flavor.trim(); out.stage = out.stage.trim();
-      out.stageOrder = Number(out.stageOrder) || 1;
+      out.stageOrder = Number(out.stageOrder);
       out.updatedAt = new Date().toISOString();
       delete out._id;
-      out.id = recipeId(out);
+      out.id = oldId || draft.id || core.uid();
+      draft.id = out.id;
+      // Validate photos after pending files receive IDs inside saveRecipe.
+      rememberDraft(); writing = true; lockEditor(true); renderTop();
       saveBtn.disabled = true; saveBtn.textContent = "Saving…";
       saveRecipe(out, draft, oldId, editing.base, saveBtn).then(function () {
-        recipes = recipes.filter(function (r) { return r._id !== oldId && r._id !== out.id; }).concat([normRecipe(out.id, out)]);
+        writing = false; forgetDraft();
         libUpdated = out.updatedAt; lastSig = "";
-        sel = { product: out.product, flavor: out.flavor, stage: out.stage };
+        sel = { product: out.product, flavor: out.allFlavors ? 'All flavors' : out.flavors[0], stage: out.stage, recipeId: out.id };
         editing = null; toast = "Saved. Everyone sees it within 30 seconds, or when they press Refresh."; render(); window.scrollTo(0, 0);
       }).catch(function (e) {
-        saveBtn.disabled = false; saveBtn.textContent = "Save";
+        writing = false; lockEditor(false); renderTop(); rememberDraft();
+        saveBtn.disabled = false; saveBtn.textContent = 'Save';
         if (!e.cancelled) errBox.textContent = "Not saved: " + explain(e) + " Your edits are still on screen.";
       });
     }
@@ -688,12 +799,11 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       delBtn = el("button", { class: "danger", onclick: function () {
         if (!confirmDelete) { confirmDelete = true; delBtn.textContent = "Click again to delete"; return; }
         delBtn.disabled = true;
-        dbGet("recipes/" + oldId).then(function (prev) {
-          return prev ? dbPut("history/" + oldId + "/" + Date.now(), prev) : null;
-        }).then(function () { return dbDel("recipes/" + oldId); })
-          .then(function () { var ts = new Date().toISOString(); libUpdated = ts; return touchMeta(ts); })
-          .then(function () { recipes = recipes.filter(function (r) { return r._id !== oldId; }); lastSig = ""; editing = null; confirmDelete = false; render(); })
-          .catch(function (e) { delBtn.disabled = false; errBox.textContent = "Not deleted: " + explain(e); });
+        writing = true; lockEditor(true); renderTop();
+        store.remove(oldId, editing.base).then(afterCommit)
+          .then(function () { writing = false; forgetDraft(); editing = null; confirmDelete = false; render(); })
+          .catch(function (e) { writing = false; lockEditor(false); renderTop(); delBtn.disabled = false; errBox.textContent = 'Not deleted: ' + explain(e); });
+
       } }, "Delete");
     }
 
@@ -701,13 +811,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     var histBtn = oldId ? el("button", { onclick: function () {
       histBox.replaceChildren(el("div", { class: "sub" }, "Loading history…"));
       dbGet("history/" + oldId).then(function (h) {
-        var keys = Object.keys(h || {}).sort(function (a, b) { return Number(b) - Number(a); }).slice(0, 20);
+        var keys = Object.keys(h || {}).sort(function (a, b) { return parseInt(b, 10) - parseInt(a, 10); }).slice(0, 100);
         if (!keys.length) { histBox.replaceChildren(el("div", { class: "sub" }, "No earlier versions yet.")); return; }
         var card = el("div", { class: "card" }, el("h2", {}, "Earlier versions"));
         keys.forEach(function (k) {
           var v = h[k];
           card.append(el("div", { class: "hit" },
-            el("span", {}, el("strong", {}, fmtDT(Number(k) ? new Date(Number(k)).toISOString() : "")), " ", el("span", { class: "m" }, "Rev " + (v.rev || "—") + " · " + (v.status || "") + " · " + (v.name || ""))),
+            el("span", {}, el("strong", {}, fmtDT(parseInt(k, 10) ? new Date(parseInt(k, 10)).toISOString() : "")), " ", el("span", { class: "m" }, "Rev " + (v.rev || "—") + " · " + (v.status || "") + " · " + (v.name || ""))),
             el("button", { class: "small", onclick: function () {
               var restored = normRecipe(oldId, v); restored.updatedAt = draft.updatedAt;
               editing.draft = restored; rerender();
@@ -722,7 +832,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       el("div", { class: "card" }, el("h2", {}, oldId ? "Edit recipe" : "New recipe"),
         el("div", { class: "row" },
           textField("Product", draft, "product", { list: "dl-products", ph: "e.g. OSFP DR8" }),
-          textField("Flavor", draft, "flavor", { list: "dl-flavors", ph: "e.g. Flavor A" }),
+          flavorInput,
+          el('div', { class: 'field' }, el('label', {}, allBox, ' All flavors')),
           textField("Stage", draft, "stage", { list: "dl-stages", ph: "e.g. Die Attach" }),
           textField("Stage order", draft, "stageOrder", { number: true })),
         el("div", { class: "row", style: "margin-top:12px" },
@@ -741,12 +852,17 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       el("div", { class: "card" }, el("h2", {}, "Procedure"), stepsArea),
       el("div", { class: "card" }, el("h2", {}, "Notes"), textField("", draft, "notes", { area: true })),
       el("div", { class: "actions" }, saveBtn,
-        el("button", { onclick: function () { editing = null; confirmDelete = false; render(); } }, "Cancel"), histBtn, delBtn),
+        el('button', { onclick: function () { if (window.confirm('Discard this draft? Download it first if you need to keep it.')) { forgetDraft(); editing = null; confirmDelete = false; render(); } } }, 'Cancel'),
+        el('button', { onclick: function () { downloadJSON({ version: 1, type: 'recipe-draft', editing: editing }, 'recipe-draft-' + Date.now() + '.json'); } }, 'Download draft'), histBtn, delBtn),
       errBox, histBox);
     return root;
   }
 
   // ---------- start ----------
+  try {
+    var recovered = JSON.parse(lsGet(RECOVERY_KEY) || 'null');
+    if (recovered && recovered.draft) { editing = recovered; role = 'editor'; toast = 'Recovered your local draft. Refresh and compare before saving if another user has edited it.'; }
+  } catch (e) {}
   tick(); setInterval(tick, 1000);
   render();
   load();

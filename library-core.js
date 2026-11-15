@@ -1,0 +1,169 @@
+/* Shared data logic. No UI, credentials or application code is stored in the database. */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.RecipeLibrary = factory();
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+  function copy(v) { return JSON.parse(JSON.stringify(v)); }
+  function canonical(v) {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+    return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + canonical(v[k]); }).join(',') + '}';
+  }
+  // Firebase removes null/empty nodes and can return numeric-key maps as arrays.
+  // Compare the stored meaning, independent of those transport representations.
+  function stored(v) {
+    if (v == null) return null;
+    if (typeof v !== 'object') return v;
+    var out = {};
+    Object.keys(v).forEach(function (k) { var x = stored(v[k]); if (x !== null) Object.defineProperty(out, k, { value: x, enumerable: true }); });
+    return Object.keys(out).length ? out : null;
+  }
+  function token(v) { return canonical(stored(v)); }
+  function uid() { return 'r-' + crypto.randomUUID(); }
+  function key(k) { return typeof k === 'string' && k.length > 0 && k.length <= 250 && !/[.#$\[\]\/\u0000-\u001f\u007f]/.test(k) && !['__proto__', 'constructor', 'prototype'].includes(k); }
+  function flavors(r) {
+    var values = Array.isArray(r.flavors) ? r.flavors : String(r.flavor || '').split(/[,;\n]/);
+    return Array.from(new Set(values.map(function (v) { return String(v).trim(); }).filter(Boolean)));
+  }
+  function applies(r, flavor) { return r.allFlavors === true || flavors(r).includes(flavor); }
+  function flavorLabel(r) { return r.allFlavors ? 'All flavors' : flavors(r).join(', '); }
+  function validate(r) {
+    ['product', 'stage', 'name'].forEach(function (k) { if (typeof r[k] !== 'string' || !r[k].trim()) throw new Error(k + ' is required.'); });
+    if (!r.allFlavors && !flavors(r).length) throw new Error('Type at least one flavor or select All flavors.');
+    if (!Number.isInteger(Number(r.stageOrder)) || Number(r.stageOrder) < 1) throw new Error('Stage order must be a positive whole number.');
+    if (!['Draft', 'Released', 'Obsolete'].includes(r.status)) throw new Error('Invalid recipe status.');
+    ['tools', 'epoxies', 'jigs', 'steps', 'images'].forEach(function (k) {
+      if (r[k] !== undefined && !Array.isArray(r[k])) throw new Error(k + ' must be an array.');
+    });
+    ['tools', 'epoxies', 'jigs'].forEach(function (k) {
+      (r[k] || []).forEach(function (v) { if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Invalid ' + k + ' row.'); });
+    });
+    (r.steps || []).forEach(function (s) { if (typeof s !== 'string') throw new Error('Procedure steps must be text.'); });
+    if ((r.images || []).length > 12) throw new Error('Up to 12 photos per recipe.');
+    (r.images || []).forEach(function (im) { if (!im || !key(im.id)) throw new Error('Invalid photo reference.'); });
+    if (r.cure && (!Array.isArray(r.cure.segments))) throw new Error('Curing segments must be an array.');
+    ((r.cure && r.cure.segments) || []).forEach(function (s, i) {
+      if (!s || s.temp === '' || s.temp == null || !Number.isFinite(Number(s.temp)) || Number(s.temp) < -273.15 || Number(s.temp) > 3000 || s.min === '' || s.min == null || !Number.isFinite(Number(s.min)) || Number(s.min) <= 0) {
+        throw new Error('Curing segment ' + (i + 1) + ': enter a temperature between -273.15 and 3000 °C and a time greater than zero.');
+      }
+    });
+    return r;
+  }
+  function clean(r) {
+    var out = copy(r);
+    delete out._id; delete out._base;
+    out.flavors = flavors(out); out.flavor = flavorLabel(out); out.allFlavors = out.allFlavors === true;
+    return out;
+  }
+  function conflict() { var e = new Error('This recipe changed or was deleted after you opened it. Your edits are retained. Download your draft, then cancel and reopen the latest recipe to merge your changes.'); e.conflict = true; return e; }
+  function createStore(base, request) {
+    var url = base.replace(/\/+$/, '') + '.json';
+    request = request || fetch;
+    async function read(etag) {
+      var res = await request(url, { cache: 'no-store', headers: etag ? { 'X-Firebase-ETag': 'true' } : {} });
+      if (!res.ok) { var e = new Error('Database read failed (' + res.status + ').'); e.status = res.status; throw e; }
+      var data = await res.json();
+      if (data !== null && (typeof data !== 'object' || Array.isArray(data))) throw new Error('Invalid database root. No data was changed.');
+      return { data: data || {}, etag: res.headers.get('ETag') };
+    }
+    async function transact(change) {
+      var operation = uid();
+      for (var attempt = 0; attempt < 6; attempt++) {
+        var snap = await read(true);
+        if (!snap.etag) throw new Error('Database did not return an ETag. Saving is blocked to prevent overwriting another user.');
+        var data = copy(snap.data);
+        change(data, operation);
+        data.meta = Object.assign({}, data.meta, { updatedAt: new Date().toISOString(), schemaVersion: 3 });
+        var res;
+        try {
+          res = await request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'if-match': snap.etag }, body: JSON.stringify(data) });
+        } catch (e) {
+          throw new Error('Connection interrupted. The save outcome is uncertain. Keep or download your draft and Refresh before retrying.');
+        }
+        if (res.status === 412) continue;
+        if (!res.ok) { var err = new Error('Database save failed (' + res.status + '). No partial update was sent.'); err.status = res.status; throw err; }
+        return data;
+      }
+      throw new Error('The library is busy with other saves. Your draft is retained; please try Save again.');
+    }
+    function history(data, id, previous, op) {
+      if (!previous) return;
+      data.history = data.history || {};
+      data.history[id] = data.history[id] || {};
+      data.history[id][Date.now() + '-' + op] = copy(previous);
+    }
+    function images(data, photos) {
+      data.images = data.images || {};
+      Object.keys(photos || {}).forEach(function (id) {
+        if (!key(id) || !photos[id] || typeof photos[id].data !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(photos[id].data)) throw new Error('Invalid image in backup.');
+        if (data.images[id] && token(data.images[id]) !== token(photos[id])) throw new Error('A photo ID conflicts with existing data. Nothing was imported.');
+        data.images[id] = copy(photos[id]);
+      });
+    }
+    function references(data, r) { (r.images || []).forEach(function (im) { if (!data.images || !data.images[im.id]) throw new Error('Photo ' + im.id + ' is missing. Nothing was saved.'); }); }
+    async function save(recipe, expected, photos) {
+      var r = clean(recipe); if (!key(r.id)) throw new Error('Invalid recipe ID.'); validate(r);
+      return transact(function (data, op) {
+        data.recipes = data.recipes || {};
+        if (token(data.recipes[r.id]) !== expected) throw conflict();
+        history(data, r.id, data.recipes[r.id], op);
+        images(data, photos); references(data, r);
+        data.recipes[r.id] = copy(r);
+      });
+    }
+    async function remove(id, expected) {
+      if (!key(id)) throw new Error('Invalid recipe ID.');
+      return transact(function (data, op) {
+        data.recipes = data.recipes || {};
+        if (!data.recipes[id] || token(data.recipes[id]) !== expected) throw conflict();
+        history(data, id, data.recipes[id], op);
+        data.deleted = data.deleted || {};
+        data.deleted[id] = { recipe: data.recipes[id], deletedAt: new Date().toISOString() };
+        delete data.recipes[id];
+      });
+    }
+    async function merge(list, photos, expected, oldHistory, archived) {
+      var seen = new Set();
+      list = list.map(function (r) {
+        var out = clean(r); validate(out);
+        if (!key(out.id) || seen.has(out.id)) throw new Error('Duplicate or invalid recipe ID in import.');
+        seen.add(out.id); return out;
+      });
+      return transact(function (data, op) {
+        data.recipes = data.recipes || {};
+        list.forEach(function (r) { if (token(data.recipes[r.id]) !== expected[r.id]) throw conflict(); });
+        images(data, photos);
+        list.forEach(function (r) {
+          references(data, r); history(data, r.id, data.recipes[r.id], op);
+          data.recipes[r.id] = copy(r);
+        });
+        data.history = data.history || {};
+        Object.keys(oldHistory || {}).forEach(function (id) {
+          if (!key(id) || !oldHistory[id] || typeof oldHistory[id] !== 'object') throw new Error('Invalid history in backup.');
+          data.history[id] = data.history[id] || {};
+          Object.keys(oldHistory[id]).forEach(function (k) {
+            if (!key(k)) throw new Error('Invalid history key.');
+            if (data.history[id][k] && token(data.history[id][k]) !== token(oldHistory[id][k])) throw new Error('Conflicting history entry. Nothing was imported.');
+            data.history[id][k] = copy(oldHistory[id][k]);
+          });
+        });
+        data.deleted = data.deleted || {};
+        Object.keys(archived || {}).forEach(function (id) { if (!key(id)) throw new Error('Invalid archive ID.'); if (!data.deleted[id]) data.deleted[id] = copy(archived[id]); });
+      });
+    }
+    async function restore(id, expectedArchive) {
+      if (!key(id)) throw new Error('Invalid recipe ID.');
+      return transact(function (data) {
+        data.recipes = data.recipes || {};
+        if (data.recipes[id] || !data.deleted || token(data.deleted[id]) !== expectedArchive) throw conflict();
+        var r = copy(data.deleted[id].recipe); validate(r); references(data, r);
+        r.updatedAt = new Date().toISOString();
+        data.recipes[id] = r;
+        delete data.deleted[id];
+      });
+    }
+    return { read: read, save: save, remove: remove, merge: merge, restore: restore };
+  }
+  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, createStore: createStore };
+});
