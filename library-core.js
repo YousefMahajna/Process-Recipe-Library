@@ -56,6 +56,17 @@
     out.flavors = flavors(out); out.flavor = flavorLabel(out); out.allFlavors = out.allFlavors === true;
     return out;
   }
+  function validateProduct(p) {
+    if (!p || !key(p.id) || typeof p.product !== 'string' || !p.product.trim()) throw new Error('Product name and valid ID are required.');
+    ['sfg', 'sa'].forEach(function (group) {
+      if (!Array.isArray(p[group])) throw new Error(group.toUpperCase() + ' flow must be a list.');
+      p[group].forEach(function (row, i) {
+        if (!row || typeof row.step !== 'string' || !row.step.trim()) throw new Error(group.toUpperCase() + ' row ' + (i + 1) + ': Step is required.');
+        ['machine', 'adhesive', 'curing', 'comment'].forEach(function (k) { if (typeof row[k] !== 'string') throw new Error('Invalid ' + k + ' in flow row.'); });
+      });
+    });
+    return p;
+  }
   function conflict() { var e = new Error('This recipe changed or was deleted after you opened it. Your edits are retained. Download your draft, then cancel and reopen the latest recipe to merge your changes.'); e.conflict = true; return e; }
   function createStore(base, request) {
     var url = base.replace(/\/+$/, '') + '.json';
@@ -123,7 +134,7 @@
         delete data.recipes[id];
       });
     }
-    async function merge(list, photos, expected, oldHistory, archived) {
+    async function merge(list, photos, expected, oldHistory, archived, products, expectedProducts, productHistory) {
       var seen = new Set();
       list = list.map(function (r) {
         var out = clean(r); validate(out);
@@ -150,6 +161,25 @@
         });
         data.deleted = data.deleted || {};
         Object.keys(archived || {}).forEach(function (id) { if (!key(id)) throw new Error('Invalid archive ID.'); if (!data.deleted[id]) data.deleted[id] = copy(archived[id]); });
+        data.adhesiveProducts = data.adhesiveProducts || {};
+        data.adhesiveHistory = data.adhesiveHistory || {};
+        Object.keys(products || {}).forEach(function (id) {
+          var p = copy(products[id]); p.id = id; validateProduct(p);
+          if (token(data.adhesiveProducts[id]) !== (expectedProducts || {})[id]) throw new Error('Adhesive flow changed since import preview. Import stopped; reload and try again.');
+          if (data.adhesiveProducts[id]) {
+            data.adhesiveHistory[id] = data.adhesiveHistory[id] || {};
+            data.adhesiveHistory[id][Date.now() + '-' + op] = copy(data.adhesiveProducts[id]);
+          }
+          data.adhesiveProducts[id] = p;
+        });
+        Object.keys(productHistory || {}).forEach(function (id) {
+          if (!key(id)) throw new Error('Invalid adhesive history ID.');
+          data.adhesiveHistory[id] = data.adhesiveHistory[id] || {};
+          Object.keys(productHistory[id]).forEach(function (k) {
+            if (!key(k) || (data.adhesiveHistory[id][k] && token(data.adhesiveHistory[id][k]) !== token(productHistory[id][k]))) throw new Error('Conflicting adhesive history. Import stopped.');
+            data.adhesiveHistory[id][k] = copy(productHistory[id][k]);
+          });
+        });
       });
     }
     async function restore(id, expectedArchive) {
@@ -163,7 +193,20 @@
         delete data.deleted[id];
       });
     }
-    return { read: read, save: save, remove: remove, merge: merge, restore: restore };
+    async function saveProduct(product, expected) {
+      var p = copy(product); delete p._base; validateProduct(p);
+      return transact(function (data, op) {
+        data.adhesiveProducts = data.adhesiveProducts || {};
+        if (token(data.adhesiveProducts[p.id]) !== expected) throw new Error('This product’s adhesive flow changed after you opened it. Your draft is retained. Download it, then reopen the latest flow and merge your changes.');
+        if (data.adhesiveProducts[p.id]) {
+          data.adhesiveHistory = data.adhesiveHistory || {};
+          data.adhesiveHistory[p.id] = data.adhesiveHistory[p.id] || {};
+          data.adhesiveHistory[p.id][Date.now() + '-' + op] = copy(data.adhesiveProducts[p.id]);
+        }
+        data.adhesiveProducts[p.id] = p;
+      });
+    }
+    return { read: read, save: save, remove: remove, merge: merge, restore: restore, saveProduct: saveProduct };
   }
-  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, createStore: createStore };
+  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, validateProduct: validateProduct, createStore: createStore };
 });
