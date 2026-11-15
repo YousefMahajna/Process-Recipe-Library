@@ -109,7 +109,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <header class="top noprint">
     <div>
       <h1>Process Recipe Library</h1>
-      <div class="sub">Product → Flavor → Stage. Tools, epoxies, jigs and curing in one place.</div>
+      <div class="sub">Product → Stage → Flavor. Tools, epoxies, jigs and curing in one place.</div>
       <div class="app-version" id="appVersion" aria-label="Application version"></div>
     </div>
     <div class="clock" aria-label="Current date and time">
@@ -123,16 +123,16 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
-<script src="library-core.js?v=15.11.26c"></script>
-<script src="adhesives.js?v=15.11.26c"></script>
-<script src="inventory.js?v=15.11.26c"></script>
+<script src="library-core.js?v=15.11.26d"></script>
+<script src="adhesives.js?v=15.11.26d"></script>
+<script src="inventory.js?v=15.11.26d"></script>
 <script>
 (function () {
   "use strict";
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-15', letter: 'c' };
+  var APP_BUILD = { date: '2026-11-15', letter: 'd' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -726,17 +726,17 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   // ---------- derived ----------
   function fixSelection() {
     var products = uniq(recipes.map(function (r) { return r.product; })).sort(cmp);
-    if (products.indexOf(sel.product) < 0) sel.product = products[0] || "";
-    var productRecipes = recipes.filter(function (r) { return r.product === sel.product; });
-    var flavors = uniq([].concat.apply([], productRecipes.map(function (r) { return r.allFlavors ? [] : r.flavors; }))).sort(cmp);
-    if (productRecipes.some(function (r) { return r.allFlavors; })) flavors.push('All flavors');
-    if (flavors.indexOf(sel.flavor) < 0) sel.flavor = flavors[0] || "";
-    var stages = recipes.filter(function (r) { return r.product === sel.product && (core.applies(r, sel.flavor)); })
-      .sort(function (a, b) { return (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage); });
-    if (!stages.some(function (r) { return r.id === sel.recipeId; })) sel.recipeId = stages[0] ? stages[0].id : '';
-    var selected = stages.find(function (r) { return r.id === sel.recipeId; });
-    sel.stage = selected ? selected.stage : '';
-    return { products: products, flavors: flavors, stages: stages };
+    if (products.indexOf(sel.product) < 0) sel.product = products[0] || '';
+    var productRecipes = recipes.filter(function (r) { return r.product === sel.product; }).sort(function (a, b) { return (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage); });
+    var stageNames = uniq(productRecipes.map(function (r) { return r.stage; }));
+    if (stageNames.indexOf(sel.stage) < 0) sel.stage = stageNames[0] || '';
+    var stageRecipes = productRecipes.filter(function (r) { return r.stage === sel.stage; });
+    var flavors = uniq([].concat.apply([], stageRecipes.map(function (r) { return r.allFlavors ? [] : r.flavors; }))).sort(cmp);
+    if (stageRecipes.some(function (r) { return r.allFlavors; })) flavors.push('All flavors');
+    if (flavors.indexOf(sel.flavor) < 0) sel.flavor = flavors[0] || '';
+    var matches = stageRecipes.filter(function (r) { return core.applies(r, sel.flavor); });
+    if (!matches.some(function (r) { return r.id === sel.recipeId; })) sel.recipeId = matches[0] ? matches[0].id : '';
+    return { products: products, stageNames: stageNames, flavors: flavors, stages: matches };
   }
 
   // ---------- render ----------
@@ -784,24 +784,23 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     return el("div", { class: "field" }, el("label", { for: s.id }, label), s);
   }
   function renderPicker(d) {
-    var tabs = el("div", { class: "tabs", role: "tablist", "aria-label": "Stage" },
+    var tabs = d.stages.length > 1 ? el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Matching recipes' },
       d.stages.map(function (r) {
-        return el("button", { class: "tab", role: "tab", "aria-selected": String(r.id === sel.recipeId),
-          onclick: function () { sel.stage = r.stage; sel.recipeId = r.id; render(); } },
-          el("span", { class: "n" }, String(r.stageOrder || "")), r.stage + (d.stages.filter(function (x) { return x.stage === r.stage; }).length > 1 ? " · " + r.name + " (" + r.flavor + ")" : ""));
-      }));
-    return el("div", { class: "card noprint" },
-      el("div", { class: "row" },
-        selectField("Product", sel.product, d.products, function (v) { sel.product = v; sel.flavor = ""; sel.stage = ""; render(); }),
-        selectField("Flavor", sel.flavor, d.flavors, function (v) { sel.flavor = v; sel.stage = ""; render(); }),
-        el("div", { class: "field" }, el("label", {}, "Search all recipes"),
-          el("input", { type: "search", placeholder: "Recipe, epoxy, jig, tool…", value: query,
-            oninput: function (e) {
-              query = e.target.value; var pos = e.target.selectionStart; render();
-              var i = app.querySelector("input[type=search]"); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (x) {} }
-            } }))),
-      query.trim() ? null : tabs);
+        return el('button', { class: 'tab', role: 'tab', 'aria-selected': String(r.id === sel.recipeId), onclick: function () { sel.recipeId = r.id; render(); } }, r.name + ' (' + r.flavor + ')');
+      })) : null;
+    return el('div', { class: 'card noprint' },
+      el('div', { class: 'row' },
+        selectField('Product', sel.product, d.products, function (v) { sel.product = v; sel.stage = ''; sel.flavor = ''; sel.recipeId = ''; render(); }),
+        selectField('Stage', sel.stage, d.stageNames, function (v) { sel.stage = v; sel.flavor = ''; sel.recipeId = ''; render(); }),
+        selectField('Flavor', sel.flavor, d.flavors, function (v) { sel.flavor = v; sel.recipeId = ''; render(); })),
+      el('div', { class: 'field', style: 'margin-top:12px' }, el('label', { for: 'recipe-search' }, 'Search all recipes'),
+        el('input', { id: 'recipe-search', type: 'search', placeholder: 'Recipe, epoxy, jig, tool…', value: query,
+          oninput: function (e) {
+            query = e.target.value; var pos = e.target.selectionStart; render();
+            var i = app.querySelector('input[type=search]'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (x) {} }
+          } })), query.trim() ? null : tabs);
   }
+
   function haystack(r) {
     var parts = [r.product, r.flavor, r.stage, r.name, r.notes, r.cure && r.cure.method];
     ["tools", "epoxies", "jigs"].forEach(function (k) { (r[k] || []).forEach(function (it) { parts.push(Object.keys(it).map(function (x) { return it[x]; }).join(" ")); }); });
@@ -811,11 +810,11 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function renderSearch() {
     var q = query.trim().toLowerCase();
     var hits = recipes.filter(function (r) { return haystack(r).indexOf(q) >= 0; })
-      .sort(function (a, b) { return cmp(a.product, b.product) || cmp(a.flavor, b.flavor) || (a.stageOrder || 0) - (b.stageOrder || 0); });
+      .sort(function (a, b) { return cmp(a.product, b.product) || (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage) || cmp(a.flavor, b.flavor); });
     var box = el("div", { class: "card" }, el("h2", {}, hits.length + " match" + (hits.length === 1 ? "" : "es")));
     hits.forEach(function (r) {
       box.append(el("button", { class: "hit", onclick: function () { sel.product = r.product; sel.flavor = r.allFlavors ? 'All flavors' : r.flavors[0]; sel.stage = r.stage; sel.recipeId = r.id; query = ''; render(); } },
-        el("span", {}, el("strong", {}, r.name || r.stage)), el("span", { class: "m" }, r.product + " · " + r.flavor + " · " + r.stage)));
+        el("span", {}, el("strong", {}, r.name || r.stage)), el("span", { class: "m" }, r.product + " · " + r.stage + " · " + r.flavor)));
     });
     return box;
   }
@@ -836,7 +835,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     var head = el("div", { class: "card" },
       el("div", { class: "recipe-head" },
         el("div", {},
-          el("div", { class: "crumbs" }, r.product + " › " + r.flavor + " › " + r.stage),
+          el("div", { class: "crumbs" }, r.product + " › " + r.stage + " › " + r.flavor),
           el("h3", {}, r.name || r.stage),
           el("div", {}, el("span", { class: "badge " + (r.status || "") }, r.status || "—"), " ",
             el("span", { class: "sub" }, "Rev " + (r.rev || "—") + " · revised " + fmtDT(r.updatedAt)))),
@@ -1030,9 +1029,9 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       el("div", { class: "card" }, el("h2", {}, oldId ? "Edit recipe" : "New recipe"),
         el("div", { class: "row" },
           textField("Product", draft, "product", { list: "dl-products", ph: "e.g. OSFP DR8" }),
+          textField("Stage", draft, "stage", { list: "dl-stages", ph: "e.g. Die Attach" }),
           flavorInput,
           el('div', { class: 'field' }, el('label', {}, allBox, ' All flavors')),
-          textField("Stage", draft, "stage", { list: "dl-stages", ph: "e.g. Die Attach" }),
           textField("Stage order", draft, "stageOrder", { number: true })),
         el("div", { class: "row", style: "margin-top:12px" },
           textField("Recipe name", draft, "name", { style: "flex:3" }),
