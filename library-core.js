@@ -48,6 +48,24 @@
         throw new Error('Curing segment ' + (i + 1) + ': enter a temperature between -273.15 and 3000 °C and a time greater than zero.');
       }
     });
+    if (r.cure && r.cure.points !== undefined) {
+      var pts = r.cure.points;
+      if (!Array.isArray(pts) || pts.length === 1) throw new Error('A curing profile needs a start and end point, or no points.');
+      pts.forEach(function(p,i) {
+        if (!p || p.time === '' || p.time == null || !Number.isFinite(Number(p.time)) || Number(p.time)<0 || p.temp === '' || p.temp == null || !Number.isFinite(Number(p.temp)) || Number(p.temp)<-273.15 || Number(p.temp)>3000 || (i && Number(p.time)<=Number(pts[i-1].time))) throw new Error('Curing points require increasing non-negative times and valid temperatures.');
+      });
+      var segments = r.cure.segments || [];
+      if (segments.length !== Math.max(0,pts.length-1)) throw new Error('Curing points and segments disagree. Reopen the profile editor.');
+      segments.forEach(function(seg,i) { if(Math.abs(Number(seg.temp)-Number(pts[i+1].temp))>0.000001 || Math.abs(Number(seg.min)-(Number(pts[i+1].time)-Number(pts[i].time)))>0.000001) throw new Error('Curing points and segment values disagree.'); });
+    }
+    if (r.cure && r.cure.chart) {
+      var chart = r.cure.chart;
+      ['timeMax','timeStep','timeSnap','tempSnap'].forEach(function(k){if(chart[k]!==undefined && chart[k]!=='' && (!Number.isFinite(Number(chart[k])) || Number(chart[k])<=0))throw new Error('Curing chart '+k+' must be positive or Auto.');});
+      ['tempMin','tempMax'].forEach(function(k){if(chart[k]!==undefined && chart[k]!=='' && (!Number.isFinite(Number(chart[k])) || Number(chart[k])<-273.15 || Number(chart[k])>3000))throw new Error('Curing chart temperature limits must be between -273.15 and 3000 °C.');});
+      if(chart.tempMin!==undefined&&chart.tempMin!==''&&chart.tempMax!==undefined&&chart.tempMax!==''&&Number(chart.tempMin)>=Number(chart.tempMax))throw new Error('Temperature axis maximum must be above minimum.');
+      var last=(r.cure.points||[]).slice(-1)[0],extent=Math.max(last?0.001:10,Number(chart.timeMax)||0,last?Number(last.time):0);
+      if(Number(chart.timeStep)>0 && extent/Number(chart.timeStep)>200)throw new Error('Choose a larger time tick interval (maximum 200 divisions).');
+    }
     return r;
   }
   function clean(r) {

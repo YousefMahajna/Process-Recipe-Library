@@ -123,16 +123,17 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
-<script src="library-core.js?v=15.11.26d"></script>
-<script src="adhesives.js?v=15.11.26d"></script>
-<script src="inventory.js?v=15.11.26d"></script>
+<script src="library-core.js?v=16.11.26a"></script>
+<script src="adhesives.js?v=16.11.26a"></script>
+<script src="inventory.js?v=16.11.26a"></script>
+<script src="curing.js?v=16.11.26a"></script>
 <script>
 (function () {
   "use strict";
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-15', letter: 'd' };
+  var APP_BUILD = { date: '2026-11-16', letter: 'a' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -280,6 +281,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     ["tools", "epoxies", "jigs", "steps", "images"].forEach(function (k) { o[k] = toArr(o[k]); });
     o.cure = Object.assign({ method: "", atmosphere: "", segments: [] }, o.cure || {});
     o.cure.segments = toArr(o.cure.segments);
+    if (o.cure.points !== undefined) o.cure.points = toArr(o.cure.points);
     o.flavors = core.flavors(o); o.allFlavors = o.allFlavors === true;
     o.flavor = core.flavorLabel(o);
     o.id = id || o.id || recipeId(o); o._id = o.id;
@@ -761,7 +763,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     if (busy) { app.append(el("div", { class: "card empty" }, busy)); return; }
     if (loadError) { app.append(el("div", { class: "card empty" }, loadError)); return; }
     if (!loaded) { app.append(el("div", { class: "card empty" }, "Loading recipes…")); return; }
-    if (editing && canEdit()) { app.append(editing.type === 'adhesives' ? renderAdhesiveEditor() : renderEditor()); return; }
+    if (editing && canEdit()) { app.append(editing.type === 'adhesives' ? renderAdhesiveEditor() : editing.cureOnly ? renderRecipe(editing.draft) : renderEditor()); return; }
     if (pageMode === 'adhesives') { app.append(renderAdhesives()); return; }
     if (!recipes.length) {
       app.append(el("div", { class: "card empty" }, el("div", { style: "font-size:17px;color:var(--text);margin-bottom:8px" }, "No recipes yet"),
@@ -841,7 +843,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
             el("span", { class: "sub" }, "Rev " + (r.rev || "—") + " · revised " + fmtDT(r.updatedAt)))),
         el("div", { class: "actions noprint" },
           el("button", { onclick: function () { window.print(); } }, "Print"),
-          canEdit() ? el("button", { onclick: function () { editing = { draft: clone(r), oldId: r._id, base: r._base }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
+          canEdit() && !(editing && editing.cureOnly) ? el("button", { onclick: function () { editing = { draft: clone(r), oldId: r._id, base: r._base }; confirmDelete = false; render(); window.scrollTo(0, 0); } }, "Edit") : null)));
     var w = el("div", {}, head);
     if (r.status === "Obsolete") w.append(el("div", { class: "note bad" }, "This recipe is obsolete. Check with process engineering before running it."));
     if (r.status === "Draft") w.append(el("div", { class: "note" }, "Draft recipe, not yet released."));
@@ -849,60 +851,38 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       section("Tools & equipment", table(TOOL_COLS, r.tools)),
       section("Jigs & fixtures", table(JIG_COLS, r.jigs))));
     w.append(section("Epoxies & materials", renderMaterials(r.epoxies)));
-    w.append(renderCure(r.cure));
+    w.append(renderCure(r.cure, r));
     if (r.steps && r.steps.length) w.append(section("Procedure", el("ol", { class: "steps" }, r.steps.map(function (s) { return el("li", {}, s); }))));
     var ph = renderPhotos(r); if (ph) w.append(ph);
     if (r.notes) w.append(section("Notes", el("div", { style: "white-space:pre-wrap" }, r.notes)));
     return w;
   }
 
-  function renderCure(c) {
+  function renderCure(c, recipe) {
     c = c || {};
-    var segs = toArr(c.segments).filter(function (s) { return s.temp !== "" && s.min !== "" && isFinite(s.temp) && isFinite(s.min); });
-    var body = el("div", {}, el("dl", { class: "kv" },
-      el("dt", {}, "Method"), el("dd", {}, c.method || "—"),
-      el("dt", {}, "Atmosphere"), el("dd", {}, c.atmosphere || "—")));
-    if (segs.length) {
-      body.append(el("div", { style: "margin-top:12px" }, table(
-        [{ k: "label", label: "Segment" }, { k: "temp", label: "Target °C" }, { k: "min", label: "Time (min)" }],
-        segs.map(function (s) { return { label: s.label, temp: String(s.temp), min: String(s.min) }; }))));
-      body.append(profileChart(segs));
+    var inline = !!(editing && editing.cureOnly && canEdit());
+    var body = el('div', {}, el('dl', { class: 'kv' }, el('dt', {}, 'Method'), el('dd', {}, c.method || '—'), el('dt', {}, 'Atmosphere'), el('dd', {}, c.atmosphere || '—')));
+    var error = el('div', { class: 'err', role: 'alert' });
+    body.append(CuringProfile.mount(c, inline, inline ? rememberDraft : null));
+    if (inline) {
+      body.append(el('div', { class: 'actions noprint', style: 'margin-top:12px' },
+        el('button', { class: 'primary', onclick: async function () {
+          if (writing) return;
+          try {
+            var out = clone(editing.draft); out.updatedAt = new Date().toISOString(); core.validate(out);
+            writing = true; lockEditor(true); renderTop();
+            await saveRecipe(out, editing.draft, editing.oldId, editing.base);
+            writing = false; editing = null; forgetDraft(); toast = 'Curing profile saved.'; render(); document.getElementById('curing-editor').scrollIntoView({ block: 'start' });
+          } catch (e) { writing = false; lockEditor(false); renderTop(); error.textContent = 'Not saved: ' + explain(e); }
+        } }, 'Save profile'),
+        el('button', { onclick: function () { if (window.confirm('Discard the curing profile draft?')) { editing = null; forgetDraft(); render(); } } }, 'Cancel profile edits'),
+        el('button', { onclick: function () { downloadJSON({ type: 'recipe-draft', editing: editing }, 'curing-profile-draft-' + Date.now() + '.json'); } }, 'Download draft')));
+    } else if (canEdit() && recipe) {
+      body.append(el('button', { class: 'primary noprint', style: 'margin-top:12px', onclick: function () {
+        editing = { draft: clone(recipe), oldId: recipe._id, base: recipe._base, cureOnly: true }; rememberDraft(); render(); document.getElementById('curing-editor').scrollIntoView({ block: 'start' });
+      } }, 'Edit curing profile'));
     }
-    return section("Curing profile", body);
-  }
-  function profileChart(segs) {
-    var W = 560, H = 200, L = 44, R = 12, T = 12, B = 30, amb = 25;
-    var pts = [[0, amb]], t = 0;
-    segs.forEach(function (s) { t += Number(s.min); pts.push([t, Number(s.temp)]); });
-    var temps = pts.map(function (p) { return p[1]; });
-    var maxT = Math.max.apply(null, temps.concat([amb + 10])), minT = Math.min.apply(null, temps);
-    var top = Math.ceil(maxT / 20) * 20, bot = Math.floor(minT / 20) * 20;
-    if (bot === top) top = bot + 20;
-    var totalT = Math.max(t, 1);
-    function X(v) { return L + (v / totalT) * (W - L - R); }
-    function Y(v) { return T + (1 - (v - bot) / (top - bot)) * (H - T - B); }
-    var ns = "http://www.w3.org/2000/svg";
-    var svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", "Cure temperature profile, total " + t + " minutes, peak " + maxT + " degrees C");
-    svg.style.cssText = "width:100%;max-width:640px;height:auto;margin-top:12px";
-    function add(tag, attrs, text) {
-      var n = document.createElementNS(ns, tag);
-      Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
-      if (text !== undefined) n.textContent = text;
-      svg.appendChild(n);
-    }
-    for (var v = bot; v <= top; v += 20) {
-      add("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--border)", "stroke-width": 1 });
-      add("text", { x: L - 6, y: Y(v) + 4, "text-anchor": "end" }, String(v));
-    }
-    add("text", { x: L, y: H - 6 }, "0");
-    add("text", { x: W - R, y: H - 6, "text-anchor": "end" }, t + " min");
-    add("text", { x: 4, y: 10 }, "°C");
-    add("polyline", { points: pts.map(function (p) { return X(p[0]) + "," + Y(p[1]); }).join(" "), fill: "none", stroke: "var(--chart)", "stroke-width": 2.5, "stroke-linejoin": "round" });
-    pts.forEach(function (p) { add("circle", { cx: X(p[0]), cy: Y(p[1]), r: 3.5, fill: "var(--chart)" }); });
-    return svg;
+    body.append(error); var result = section('Curing profile', body); result.id = 'curing-editor'; return result;
   }
 
   // ---------- editor ----------
@@ -1042,8 +1022,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       materialEditor(draft, rerender),
       el("div", { class: "card" }, el("h2", {}, "Curing"),
         el("div", { class: "row" }, textField("Method", draft.cure, "method", { ph: "Box oven / UV / room temp" }), textField("Atmosphere", draft.cure, "atmosphere", { ph: "Air / N2" })),
-        el("div", { class: "sub", style: "margin:10px 0" }, "Each segment ramps from the previous temperature to its target over the given minutes. Same temperature as before = hold. The chart starts at 25 °C."),
-        listEditor("Segments", draft.cure.segments, [{ k: "label", label: "Label" }, { k: "temp", label: "Target °C", number: true }, { k: "min", label: "Minutes", number: true }], rerender)),
+        CuringProfile.mount(draft.cure, true, rememberDraft)),
       photoEditor(draft, rerender),
       el("div", { class: "card" }, el("h2", {}, "Procedure"), stepsArea),
       el("div", { class: "card" }, el("h2", {}, "Notes"), textField("", draft, "notes", { area: true })),
