@@ -123,18 +123,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
-<script src="library-core.js?v=18.11.26a"></script>
-<script src="adhesives.js?v=18.11.26a"></script>
-<script src="inventory.js?v=18.11.26a"></script>
-<script src="curing.js?v=18.11.26a"></script>
-<script src="process-flow.js?v=18.11.26a"></script>
+<script src="library-core.js?v=18.11.26b"></script>
+<script src="adhesives.js?v=18.11.26b"></script>
+<script src="inventory.js?v=18.11.26b"></script>
+<script src="curing.js?v=18.11.26b"></script>
+<script src="process-flow.js?v=18.11.26b"></script>
+<script src="parts-bom.js?v=18.11.26b"></script>
 <script>
 (function () {
   "use strict";
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-18', letter: 'a' };
+  var APP_BUILD = { date: '2026-11-18', letter: 'b' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -146,9 +147,10 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   var BASE = DB_URL.replace(/\/+$/, "") + "/" + ROOT + "/";
   var NOT_CONFIGURED = /YOUR-PROJECT/.test(DB_URL);
   var REFRESH_MS = 30000;
-  var pageMode = location.hash === '#flow' ? 'flow' : location.hash === '#adhesives' ? 'adhesives' : 'recipes';
+  var pageMode = location.hash === '#parts' ? 'parts' : location.hash === '#flow' ? 'flow' : location.hash === '#adhesives' ? 'adhesives' : 'recipes';
   var adhesiveProducts = {}, adhesiveProductId = 'splinter';
   var processFlows = {}, flowProductId = 'splinter', flowState = { selected: 0 };
+  var partsBoms = {}, bomProductId = 'splinter', bomState = { flavor: '__all', query: '', itemId: '', optionId: '' };
   var MAX_PHOTOS = 12;
   var core = RecipeLibrary, store = core.createStore(BASE);
   var writing = false, syncError = '', lastSync = '', backupDir = null, backupMessage = '';
@@ -178,7 +180,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         if (!saved || !saved.draft) return;
         count++;
         dialog.append(el('button', { class: 'hit', onclick: function () {
-          editing = clone(saved); pageMode = editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; rememberDraft(); dialog.close(); dialog.remove(); render();
+          editing = clone(saved); pageMode = editing.type === 'bom' ? 'parts' : editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; rememberDraft(); dialog.close(); dialog.remove(); render();
         } }, saved.draft.product + ' · ' + (saved.draft.name || 'Unnamed draft')));
       });
     } catch (e) { dialog.append(el('div', {}, 'Browser draft storage is unavailable.')); }
@@ -213,6 +215,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     await writeBackup(data);
     adhesiveProducts = data.adhesiveProducts || {};
     processFlows = data.processFlows || {};
+    partsBoms = data.partsBoms || {};
     recipes = Object.keys(data.recipes || {}).map(function (id) { return normRecipe(id, data.recipes[id]); });
     libUpdated = (data.meta || {}).updatedAt || ''; lastSig = ''; lastSync = new Date().toISOString(); syncError = '';
   }
@@ -350,16 +353,16 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   function load(force) {
     if (NOT_CONFIGURED) return Promise.resolve();
-    return Promise.all([dbGet("recipes"), dbGet("meta/updatedAt"), dbGet("adhesiveProducts"), dbGet("processFlows")]).then(function (r) {
+    return Promise.all([dbGet("recipes"), dbGet("meta/updatedAt"), dbGet("adhesiveProducts"), dbGet("processFlows"), dbGet("partsBoms")]).then(function (r) {
       var obj = r[0] || {};
       var list = Object.keys(obj).map(function (k) { return normRecipe(k, obj[k]); });
       var newest = list.reduce(function (m, x) { return x.updatedAt && x.updatedAt > m ? x.updatedAt : m; }, "");
       var ts = (r[1] && r[1] > newest) ? r[1] : (newest || r[1] || "");
-      var sig = JSON.stringify([list, ts, r[2], r[3]]);
+      var sig = JSON.stringify([list, ts, r[2], r[3], r[4]]);
       var first = !loaded;
       if (writing) return;
       loaded = true; loadError = ''; syncError = ''; lastSync = new Date().toISOString();
-      if (first || force || sig !== lastSig) { recipes = list; libUpdated = ts; adhesiveProducts = r[2] || {}; processFlows = r[3] || {}; lastSig = sig; }
+      if (first || force || sig !== lastSig) { recipes = list; libUpdated = ts; adhesiveProducts = r[2] || {}; processFlows = r[3] || {}; partsBoms = r[4] || {}; lastSig = sig; }
       if (first || !editing) render(); else { renderRev(); renderTop(); }
     }).catch(function (e) {
       syncError = 'Cannot sync. Displayed recipes may be out of date. ' + explain(e);
@@ -492,7 +495,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       if (!source || typeof source !== 'object') throw new Error('Invalid backup data.');
       var raw = Array.isArray(source) ? source : source.recipes;
       var list = Array.isArray(raw) ? raw.map(function (r) { return normRecipe(r.id || recipeId(r), r); }) : Object.keys(raw || {}).map(function (id) { return normRecipe(id, raw[id]); });
-      if (!list.length && !Object.keys(source.history || {}).length && !Object.keys(source.deleted || {}).length && !Object.keys(source.adhesiveProducts || {}).length && !Object.keys(source.adhesiveHistory || {}).length && !Object.keys(source.processFlows || {}).length && !Object.keys(source.processFlowHistory || {}).length) throw new Error('The file has no recipes or recovery history.');
+      if (!list.length && !Object.keys(source.history || {}).length && !Object.keys(source.deleted || {}).length && !Object.keys(source.adhesiveProducts || {}).length && !Object.keys(source.adhesiveHistory || {}).length && !Object.keys(source.processFlows || {}).length && !Object.keys(source.processFlowHistory || {}).length && !Object.keys(source.partsBoms || {}).length && !Object.keys(source.partsBomHistory || {}).length) throw new Error('The file has no recipes or recovery history.');
       list.forEach(core.validate);
       var snap = await store.read(), expected = {}, expectedProducts = {};
       var productData = {};
@@ -503,12 +506,14 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       list.forEach(function (r) { expected[r.id] = core.token((snap.data.recipes || {})[r.id]); });
       var flowBundle = { flows: {}, expected: {}, history: source.processFlowHistory || {} };
       Object.keys(source.processFlows || {}).forEach(function(id) { var flow = ProcessFlowPage.normalize(source.processFlows[id], id, toArr); core.validateFlow(flow); flowBundle.flows[id] = flow; flowBundle.expected[id] = core.token((snap.data.processFlows || {})[id]); });
+      var bomBundle={boms:{},expected:{},history:source.partsBomHistory||{}};
+      Object.keys(source.partsBoms||{}).forEach(function(id){var bom=PartsBomPage.normalize(source.partsBoms[id],id,toArr);core.validateBom(bom);bomBundle.boms[id]=bom;bomBundle.expected[id]=core.token((snap.data.partsBoms||{})[id]);});
       var replaced = list.filter(function (r) { return expected[r.id] !== 'null'; }).length;
-      if (!window.confirm((askText || 'Import this backup?') + '\n' + Object.keys(flowBundle.flows).length + ' product process flows; ' + Object.keys(productData).length + ' adhesive product flows; ' + list.length + ' recipes; ' + replaced + ' existing recipes will be replaced with their previous versions retained in history. Other recipes stay in the library.')) return;
+      if (!window.confirm((askText || 'Import this backup?') + '\n' + Object.keys(bomBundle.boms).length + ' optical/mechanical BOMs; ' + Object.keys(flowBundle.flows).length + ' product process flows; ' + Object.keys(productData).length + ' adhesive product flows; ' + list.length + ' recipes; ' + replaced + ' existing recipes will be replaced with their previous versions retained in history. Other recipes stay in the library.')) return;
       // Download the fresh pre-import snapshot before making any replacement.
       downloadJSON(exportSnapshot(snap.data), 'recipe-library-before-import-' + Date.now() + '.json');
       busy = 'Importing…'; writing = true; render();
-      var data = await store.merge(list, source.images || {}, expected, source.history, source.deleted, productData, expectedProducts, source.adhesiveHistory, flowBundle);
+      var data = await store.merge(list, source.images || {}, expected, source.history, source.deleted, productData, expectedProducts, source.adhesiveHistory, flowBundle, bomBundle);
       await afterCommit(data); toast = 'Import completed. Previous versions were retained.';
     } catch (e) { toast = 'Import stopped: ' + explain(e); }
     finally { busy = ''; writing = false; render(); }
@@ -764,6 +769,30 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     });
   }
 
+  // ---------- optical / mechanical BOM ----------
+  function bomCatalog() {
+    var all=Object.assign({},partsBoms);
+    function has(name){return Object.keys(all).some(function(id){return all[id].product.trim().toLowerCase()===name.trim().toLowerCase();});}
+    if(!has('Splinter'))all.splinter=PartsBomPage.seed;
+    uniq(recipes.map(function(r){return r.product;}).concat(Object.keys(adhesiveProducts).map(function(id){return adhesiveProducts[id].product;}),Object.keys(processFlows).map(function(id){return processFlows[id].product;}))).forEach(function(name){if(!name||has(name))return;var hash=2166136261;for(var i=0;i<name.length;i++)hash=Math.imul(hash^name.charCodeAt(i),16777619);var id='product-'+slug(name).slice(0,120)+'-'+(hash>>>0).toString(16);all[id]={id:id,product:name,flavors:[],items:[]};});return all;
+  }
+  function renderPartsBom(isEditing) {
+    var catalog=bomCatalog();if(!catalog[bomProductId])bomProductId=Object.keys(catalog)[0];
+    var bom=isEditing?editing.draft:PartsBomPage.normalize(catalog[bomProductId],bomProductId,toArr);
+    function begin(value){editing={type:'bom',draft:clone(value),oldId:value.id,base:core.token(partsBoms[value.id])};bomState.itemId='';bomState.optionId='';rememberDraft();render();}
+    function flavorField(label,obj,key){var id='bom-list-'+crypto.randomUUID(),input=el('input',{id:id,value:toArr(obj[key]).join(', '),placeholder:'PIBA1, PIBA3+',oninput:function(e){obj[key]=PartsBomPage.split(e.target.value);}});return el('div',{class:'field'},el('label',{for:id},label),input);}
+    return PartsBomPage.render({el:el,textField:textField,flavorField:flavorField,uid:core.uid,bom:bom,catalog:catalog,editing:isEditing,canEdit:canEdit(),stored:!!partsBoms[bom.id],state:bomState,
+      knownFlavors:uniq([].concat.apply([],recipes.filter(function(r){return r.product.toLowerCase()===bom.product.toLowerCase();}).map(function(r){return r.allFlavors?[]:r.flavors;}))),
+      rerender:function(){if(editing)rememberDraft();render();},changed:rememberDraft,
+      edit:function(){begin(bom);},create:function(){begin({id:core.uid(),product:'',flavors:[],items:[]});},
+      selectProduct:function(id){bomProductId=id;bomState={flavor:'__all',query:'',itemId:'',optionId:''};render();},
+      save:async function(error){if(writing)return;try{var out=clone(editing.draft);out.product=out.product.trim();out.updatedAt=new Date().toISOString();PartsBomPage.prune(out);core.validateBom(out);rememberDraft();writing=true;lockEditor(true);renderTop();await afterCommit(await store.saveBom(out,editing.base));bomProductId=out.id;writing=false;editing=null;forgetDraft();toast='Optical and mechanical BOM saved.';render();}catch(e){writing=false;lockEditor(false);renderTop();error.textContent='Not saved: '+explain(e);}},
+      cancel:function(){if(window.confirm('Discard the BOM draft?')){editing=null;forgetDraft();render();}},
+      download:function(){downloadJSON({type:'optical-mechanical-bom-draft',editing:editing},'parts-bom-draft-'+Date.now()+'.json');},
+      history:async function(container,error){try{var records=await dbGet('partsBomHistory/'+bom.id),keys=Object.keys(records||{}).sort(function(a,b){return parseInt(b)-parseInt(a);});container.replaceChildren(el('h3',{},'Earlier optical/mechanical BOM versions'));if(!keys.length)container.append(el('div',{class:'sub'},'No earlier BOM versions.'));keys.forEach(function(k){container.append(el('button',{class:'hit',onclick:function(){editing.draft=PartsBomPage.normalize(records[k],bom.id,toArr);bomState.itemId='';bomState.optionId='';rememberDraft();render();}},fmtDT(records[k].updatedAt)+' · Load into editor'));});}catch(e){error.textContent=explain(e);}}
+    });
+  }
+
   // ---------- derived ----------
   function fixSelection() {
     var products = uniq(recipes.map(function (r) { return r.product; })).sort(cmp);
@@ -785,11 +814,11 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     renderTop(); renderRev();
     app.replaceChildren();
     app.append(el('nav', { class: 'tabs noprint', 'aria-label': 'Library pages', style: 'margin:0 0 16px' },
-      ['recipes', 'adhesives', 'flow'].map(function (mode) { return el('button', { class: pageMode === mode ? 'primary' : '', onclick: function () {
+      ['recipes', 'adhesives', 'flow', 'parts'].map(function (mode) { return el('button', { class: pageMode === mode ? 'primary' : '', onclick: function () {
         if (writing || busy) return;
         if (editing) { if (!window.confirm('Leave this editor? A browser recovery draft will be kept.')) return; rememberDraft(); editing = null; }
         pageMode = mode; history.replaceState(null, '', '#' + mode); render();
-      } }, mode === 'recipes' ? 'Recipes' : mode === 'flow' ? 'Product flow' : 'Adhesives & curing conditions'); })));
+      } }, mode === 'recipes' ? 'Recipes' : mode === 'flow' ? 'Product flow' : mode === 'parts' ? 'Optical and mechanical parts' : 'Adhesives & curing conditions'); })));
 
     if (syncError) app.append(el('div', { class: 'note bad', role: 'alert' }, syncError));
     app.append(el('div', { class: 'sub noprint', style: 'margin-bottom:10px' }, 'Shared database · Last sync: ' + fmtDT(lastSync) + ' · ' + (backupMessage || (backupDir ? 'Folder backup connected for this session' : 'External file backup not connected. Choose a backup folder or download Backup.'))));
@@ -802,7 +831,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     if (busy) { app.append(el("div", { class: "card empty" }, busy)); return; }
     if (loadError) { app.append(el("div", { class: "card empty" }, loadError)); return; }
     if (!loaded) { app.append(el("div", { class: "card empty" }, "Loading recipes…")); return; }
-    if (editing && canEdit()) { app.append(editing.type === 'flow' ? renderProductFlow(true) : editing.type === 'adhesives' ? renderAdhesiveEditor() : editing.cureOnly ? renderRecipe(editing.draft) : renderEditor()); return; }
+    if (editing && canEdit()) { app.append(editing.type === 'bom' ? renderPartsBom(true) : editing.type === 'flow' ? renderProductFlow(true) : editing.type === 'adhesives' ? renderAdhesiveEditor() : editing.cureOnly ? renderRecipe(editing.draft) : renderEditor()); return; }
+    if (pageMode === 'parts') { app.append(renderPartsBom(false)); return; }
     if (pageMode === 'flow') { app.append(renderProductFlow(false)); return; }
     if (pageMode === 'adhesives') { app.append(renderAdhesives()); return; }
     if (!recipes.length) {
@@ -1076,7 +1106,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   // ---------- start ----------
   try {
     var recovered = JSON.parse(lsGet(RECOVERY_KEY) || 'null');
-    if (recovered && recovered.draft) { editing = recovered; pageMode = editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; role = 'editor'; toast = 'Recovered your local draft. Refresh and compare before saving if another user has edited it.'; }
+    if (recovered && recovered.draft) { editing = recovered; pageMode = editing.type === 'bom' ? 'parts' : editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; role = 'editor'; toast = 'Recovered your local draft. Refresh and compare before saving if another user has edited it.'; }
   } catch (e) {}
   tick(); setInterval(tick, 1000);
   render();

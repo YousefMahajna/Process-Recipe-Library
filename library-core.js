@@ -89,6 +89,20 @@
     if(!f || !key(f.id) || typeof f.product!=='string' || !f.product.trim() || !Array.isArray(f.steps))throw new Error('A product name and an ordered flow are required.');
     var ids=new Set();f.steps.forEach(function(s,i){if(!s || !key(s.id) || ids.has(s.id) || typeof s.name!=='string' || !s.name.trim() || !['process','testing'].includes(s.type))throw new Error('Step '+(i+1)+': enter a unique ID, name, and Process or Testing type.');ids.add(s.id);if(s.recipeId && !key(s.recipeId))throw new Error('Invalid linked recipe.');if(s.comment!==undefined&&typeof s.comment!=='string')throw new Error('Step comments must be text.');});return f;
   }
+  function validateBom(b) {
+    if(!b || !key(b.id) || typeof b.product!=='string' || !b.product.trim() || !Array.isArray(b.items) || !Array.isArray(b.flavors))throw new Error('BOM requires a product, flavor list, and item list.');
+    var ids=new Set();b.flavors.forEach(function(f){if(typeof f!=='string'||!f.trim())throw new Error('BOM flavors must be text.');});
+    if(b.excludedFlavors!==undefined&&(!Array.isArray(b.excludedFlavors)||b.excludedFlavors.some(function(f){return typeof f!=='string'||!f.trim();})))throw new Error('Unavailable flavors must be a list of names.');
+    b.items.forEach(function(item,i){if(!item || !key(item.id)||ids.has(item.id)||typeof item.name!=='string'||!item.name.trim()||!['Mechanical','Optical','TOSA','ROSA'].includes(item.category)||!Array.isArray(item.options))throw new Error('BOM item '+(i+1)+': enter a name, category, unique ID, and PN options.');ids.add(item.id);
+      item.options.forEach(function(o,j){if(!o||!key(o.id)||ids.has(o.id)||(!String(o.nvpn||'').trim()&&!String(o.tfcPn||'').trim())||!['all','specific','unassigned'].includes(o.scope)||!Array.isArray(o.flavors))throw new Error('BOM option '+(j+1)+' in '+item.name+': PN, unique ID, and applicability are required.');ids.add(o.id);if(o.scope==='specific'&&!o.flavors.length)throw new Error('Specific-flavor PN options need at least one flavor.');o.flavors.forEach(function(f){if(typeof f!=='string'||!f.trim())throw new Error('Invalid BOM option flavor.');});if(typeof o.reviewRequired!=='boolean')throw new Error('BOM option review flag is required.');
+        ['nvpn','tfcPn','description','chip','coc','substrate','pSide','pd','tia','stockNote','note','source'].forEach(function(k){if(o[k]!==undefined&&typeof o[k]!=='string')throw new Error('BOM '+k+' must be text.');});
+      });
+    });
+    var tosaIds=new Set(b.items.filter(function(i){return i.category==='TOSA';}).flatMap(function(i){return i.options.map(function(o){return o.id;});}));
+    b.items.forEach(function(i){i.options.forEach(function(o){if(o.tosaRestriction!==undefined&&typeof o.tosaRestriction!=='boolean')throw new Error('TOSA restriction must be true or false.');if(o.compatibleTosa!==undefined&&(!Array.isArray(o.compatibleTosa)||o.compatibleTosa.some(function(id){return !tosaIds.has(id);})))throw new Error('BOM compatibility links must reference existing TOSA options.');});});
+    if(b.lensReference!==undefined&&(!Array.isArray(b.lensReference)||b.lensReference.some(function(r){return !r||typeof r.eml!=='string'||typeof r.pSide!=='string'||!Array.isArray(r.tosaOptions)||!Array.isArray(r.lensOptions)||typeof r.coupled!=='string'||typeof r.required!=='string';})))throw new Error('Invalid lens reference table.');
+    return b;
+  }
   function conflict() { var e = new Error('This recipe changed or was deleted after you opened it. Your edits are retained. Download your draft, then cancel and reopen the latest recipe to merge your changes.'); e.conflict = true; return e; }
   function createStore(base, request) {
     var url = base.replace(/\/+$/, '') + '.json';
@@ -156,7 +170,7 @@
         delete data.recipes[id];
       });
     }
-    async function merge(list, photos, expected, oldHistory, archived, products, expectedProducts, productHistory, flowBundle) {
+    async function merge(list, photos, expected, oldHistory, archived, products, expectedProducts, productHistory, flowBundle, bomBundle) {
       var seen = new Set();
       list = list.map(function (r) {
         var out = clean(r); validate(out);
@@ -208,6 +222,10 @@
             if(data.processFlows[id]){data.processFlowHistory[id]=data.processFlowHistory[id]||{};data.processFlowHistory[id][Date.now()+'-'+op]=copy(data.processFlows[id]);}data.processFlows[id]=f;});
           Object.keys(flowBundle.history||{}).forEach(function(id){if(!key(id))throw new Error('Invalid process flow history ID.');data.processFlowHistory[id]=data.processFlowHistory[id]||{};Object.keys(flowBundle.history[id]).forEach(function(k){if(!key(k)||(data.processFlowHistory[id][k]&&token(data.processFlowHistory[id][k])!==token(flowBundle.history[id][k])))throw new Error('Conflicting process flow history. Import stopped.');data.processFlowHistory[id][k]=copy(flowBundle.history[id][k]);});});
         }
+        if(bomBundle){data.partsBoms=data.partsBoms||{};data.partsBomHistory=data.partsBomHistory||{};
+          Object.keys(bomBundle.boms||{}).forEach(function(id){var b=copy(bomBundle.boms[id]);b.id=id;validateBom(b);if(token(data.partsBoms[id])!==(bomBundle.expected||{})[id])throw new Error('Optical/mechanical BOM changed after import preview. Import stopped.');if(data.partsBoms[id]){data.partsBomHistory[id]=data.partsBomHistory[id]||{};data.partsBomHistory[id][Date.now()+'-'+op]=copy(data.partsBoms[id]);}data.partsBoms[id]=b;});
+          Object.keys(bomBundle.history||{}).forEach(function(id){if(!key(id))throw new Error('Invalid BOM history ID.');data.partsBomHistory[id]=data.partsBomHistory[id]||{};Object.keys(bomBundle.history[id]).forEach(function(k){if(!key(k)||(data.partsBomHistory[id][k]&&token(data.partsBomHistory[id][k])!==token(bomBundle.history[id][k])))throw new Error('Conflicting BOM history. Import stopped.');data.partsBomHistory[id][k]=copy(bomBundle.history[id][k]);});});
+        }
       });
     }
     async function restore(id, expectedArchive) {
@@ -240,7 +258,8 @@
         Object.keys(data.processFlows).forEach(function(id){if(id!==f.id&&data.processFlows[id].product.trim().toLowerCase()===f.product.trim().toLowerCase())throw new Error('A process flow already exists for this product. Edit that flow instead.');});
         if(data.processFlows[f.id]){data.processFlowHistory=data.processFlowHistory||{};data.processFlowHistory[f.id]=data.processFlowHistory[f.id]||{};data.processFlowHistory[f.id][Date.now()+'-'+op]=copy(data.processFlows[f.id]);}data.processFlows[f.id]=f;});
     }
-    return { read: read, save: save, remove: remove, merge: merge, restore: restore, saveProduct: saveProduct, saveFlow:saveFlow };
+    async function saveBom(bom,expected){var b=copy(bom);validateBom(b);return transact(function(data,op){data.partsBoms=data.partsBoms||{};if(token(data.partsBoms[b.id])!==expected)throw new Error('This optical/mechanical BOM changed after you opened it. Your draft is retained. Download it, then reopen the latest BOM to merge your edits.');Object.keys(data.partsBoms).forEach(function(id){if(id!==b.id&&data.partsBoms[id].product.trim().toLowerCase()===b.product.trim().toLowerCase())throw new Error('A BOM already exists for this product.');});if(data.partsBoms[b.id]){data.partsBomHistory=data.partsBomHistory||{};data.partsBomHistory[b.id]=data.partsBomHistory[b.id]||{};data.partsBomHistory[b.id][Date.now()+'-'+op]=copy(data.partsBoms[b.id]);}data.partsBoms[b.id]=b;});}
+    return { read: read, save: save, remove: remove, merge: merge, restore: restore, saveProduct: saveProduct, saveFlow:saveFlow,saveBom:saveBom };
   }
-  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, validateProduct: validateProduct, validateFlow:validateFlow, createStore: createStore };
+  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, validateProduct: validateProduct, validateFlow:validateFlow,validateBom:validateBom, createStore: createStore };
 });
