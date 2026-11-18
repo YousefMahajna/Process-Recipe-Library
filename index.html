@@ -123,19 +123,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
-<script src="library-core.js?v=18.11.26b"></script>
-<script src="adhesives.js?v=18.11.26b"></script>
-<script src="inventory.js?v=18.11.26b"></script>
-<script src="curing.js?v=18.11.26b"></script>
-<script src="process-flow.js?v=18.11.26b"></script>
-<script src="parts-bom.js?v=18.11.26b"></script>
+<script src="library-core.js?v=18.11.26c"></script>
+<script src="adhesives.js?v=18.11.26c"></script>
+<script src="inventory.js?v=18.11.26c"></script>
+<script src="curing.js?v=18.11.26c"></script>
+<script src="process-flow.js?v=18.11.26c"></script>
+<script src="parts-bom.js?v=18.11.26c"></script>
 <script>
 (function () {
   "use strict";
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-18', letter: 'b' };
+  var APP_BUILD = { date: '2026-11-18', letter: 'c' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -739,7 +739,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function flowCatalog() {
     var all = Object.assign({}, processFlows);
     function has(name) { return Object.keys(all).some(function(id){return all[id].product.trim().toLowerCase() === name.trim().toLowerCase();}); }
-    if (!has('Splinter')) all.splinter = ProcessFlowPage.seed;
+    Object.keys(ProcessFlowPage.seeds).forEach(function(id){var value=ProcessFlowPage.seeds[id];if(!has(value.product))all[id]=value;});
     uniq(recipes.map(function(r){return r.product;}).concat(Object.keys(adhesiveProducts).map(function(id){return adhesiveProducts[id].product;}))).forEach(function(name){
       if (!name || has(name)) return;
       var hash = 2166136261; for(var i=0;i<name.length;i++) hash=Math.imul(hash^name.charCodeAt(i),16777619);
