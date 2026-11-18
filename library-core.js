@@ -85,6 +85,10 @@
     });
     return p;
   }
+  function validateFlow(f) {
+    if(!f || !key(f.id) || typeof f.product!=='string' || !f.product.trim() || !Array.isArray(f.steps))throw new Error('A product name and an ordered flow are required.');
+    var ids=new Set();f.steps.forEach(function(s,i){if(!s || !key(s.id) || ids.has(s.id) || typeof s.name!=='string' || !s.name.trim() || !['process','testing'].includes(s.type))throw new Error('Step '+(i+1)+': enter a unique ID, name, and Process or Testing type.');ids.add(s.id);if(s.recipeId && !key(s.recipeId))throw new Error('Invalid linked recipe.');if(s.comment!==undefined&&typeof s.comment!=='string')throw new Error('Step comments must be text.');});return f;
+  }
   function conflict() { var e = new Error('This recipe changed or was deleted after you opened it. Your edits are retained. Download your draft, then cancel and reopen the latest recipe to merge your changes.'); e.conflict = true; return e; }
   function createStore(base, request) {
     var url = base.replace(/\/+$/, '') + '.json';
@@ -152,7 +156,7 @@
         delete data.recipes[id];
       });
     }
-    async function merge(list, photos, expected, oldHistory, archived, products, expectedProducts, productHistory) {
+    async function merge(list, photos, expected, oldHistory, archived, products, expectedProducts, productHistory, flowBundle) {
       var seen = new Set();
       list = list.map(function (r) {
         var out = clean(r); validate(out);
@@ -198,6 +202,12 @@
             data.adhesiveHistory[id][k] = copy(productHistory[id][k]);
           });
         });
+        if(flowBundle){
+          data.processFlows=data.processFlows||{};data.processFlowHistory=data.processFlowHistory||{};
+          Object.keys(flowBundle.flows||{}).forEach(function(id){var f=copy(flowBundle.flows[id]);f.id=id;validateFlow(f);if(token(data.processFlows[id])!==(flowBundle.expected||{})[id])throw new Error('Product process flow changed after import preview. Import stopped.');
+            if(data.processFlows[id]){data.processFlowHistory[id]=data.processFlowHistory[id]||{};data.processFlowHistory[id][Date.now()+'-'+op]=copy(data.processFlows[id]);}data.processFlows[id]=f;});
+          Object.keys(flowBundle.history||{}).forEach(function(id){if(!key(id))throw new Error('Invalid process flow history ID.');data.processFlowHistory[id]=data.processFlowHistory[id]||{};Object.keys(flowBundle.history[id]).forEach(function(k){if(!key(k)||(data.processFlowHistory[id][k]&&token(data.processFlowHistory[id][k])!==token(flowBundle.history[id][k])))throw new Error('Conflicting process flow history. Import stopped.');data.processFlowHistory[id][k]=copy(flowBundle.history[id][k]);});});
+        }
       });
     }
     async function restore(id, expectedArchive) {
@@ -224,7 +234,13 @@
         data.adhesiveProducts[p.id] = p;
       });
     }
-    return { read: read, save: save, remove: remove, merge: merge, restore: restore, saveProduct: saveProduct };
+    async function saveFlow(flow,expected) {
+      var f=copy(flow);validateFlow(f);
+      return transact(function(data,op){data.processFlows=data.processFlows||{};if(token(data.processFlows[f.id])!==expected)throw new Error('This product process flow changed after you opened it. Your draft is retained. Download it, then reopen the latest flow to merge your edits.');
+        Object.keys(data.processFlows).forEach(function(id){if(id!==f.id&&data.processFlows[id].product.trim().toLowerCase()===f.product.trim().toLowerCase())throw new Error('A process flow already exists for this product. Edit that flow instead.');});
+        if(data.processFlows[f.id]){data.processFlowHistory=data.processFlowHistory||{};data.processFlowHistory[f.id]=data.processFlowHistory[f.id]||{};data.processFlowHistory[f.id][Date.now()+'-'+op]=copy(data.processFlows[f.id]);}data.processFlows[f.id]=f;});
+    }
+    return { read: read, save: save, remove: remove, merge: merge, restore: restore, saveProduct: saveProduct, saveFlow:saveFlow };
   }
-  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, validateProduct: validateProduct, createStore: createStore };
+  return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, validateProduct: validateProduct, validateFlow:validateFlow, createStore: createStore };
 });
