@@ -123,19 +123,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
-<script src="library-core.js?v=18.11.26c"></script>
-<script src="adhesives.js?v=18.11.26c"></script>
-<script src="inventory.js?v=18.11.26c"></script>
-<script src="curing.js?v=18.11.26c"></script>
-<script src="process-flow.js?v=18.11.26c"></script>
-<script src="parts-bom.js?v=18.11.26c"></script>
+<script src="library-core.js?v=18.11.26d"></script>
+<script src="adhesives.js?v=18.11.26d"></script>
+<script src="inventory.js?v=18.11.26d"></script>
+<script src="curing.js?v=18.11.26d"></script>
+<script src="process-flow.js?v=18.11.26d"></script>
+<script src="parts-bom.js?v=18.11.26d"></script>
 <script>
 (function () {
   "use strict";
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-18', letter: 'c' };
+  var APP_BUILD = { date: '2026-11-18', letter: 'd' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -656,9 +656,14 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // ---------- product adhesive / curing flows ----------
   var FLOW_FIELDS = [{ k: 'step', label: 'Step' }, { k: 'machine', label: 'Machine' }, { k: 'adhesive', label: 'Adhesive' }, { k: 'curing', label: 'Curing' }, { k: 'comment', label: 'Comment' }];
+  var TIM2_FIELDS = [{ k: 'adhesive', label: 'PN / material' }, { k: 'k', label: 'k (as supplied)' }, { k: 'technology', label: 'Technology' }, { k: 'diamondContent', label: 'Diamond content' }, { k: 'minBlt', label: 'Min BLT (units not supplied)' }, { k: 'status', label: 'Source status' }];
+  function adhesiveFields(product, group, editor) {
+    if(group === 'sa' && product.saLayout === 'tim2')return editor ? [{k:'step',label:'Option / step'}].concat(TIM2_FIELDS, [{k:'machine',label:'Machine'},{k:'curing',label:'Curing'},{k:'comment',label:'Comment'}]) : TIM2_FIELDS;
+    return FLOW_FIELDS;
+  }
   function adhesiveList() {
     var all = Object.assign({}, adhesiveProducts);
-    if (!all.splinter) all.splinter = AdhesivesPage.seed;
+    Object.keys(AdhesivesPage.seeds).forEach(function(id){var value=AdhesivesPage.seeds[id];if(!Object.keys(all).some(function(k){return all[k].product.trim().toLowerCase()===value.product.toLowerCase();}))all[id]=value;});
     return all;
   }
   function openAdhesiveEditor(p, isNew) {
@@ -678,14 +683,15 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         canEdit() ? el('button', { onclick: function () { openAdhesiveEditor({ id: core.uid(), product: '', sfg: [], sa: [], source: '' }, true); } }, '+ New product') : null)),
       el('div', { class: 'field noprint', style: 'max-width:360px;margin-top:12px' }, el('label', { for: 'adhesive-product' }, 'Adhesive product'), select)));
     box.append(el('h3', {}, p.product));
-    if (!adhesiveProducts[p.id]) box.append(el('div', { class: 'note' }, 'Splinter reference from the supplied image. Not yet saved to the shared database. Edit adhesive flows and Save flows to include it in shared data and backups.'));
+    if (!adhesiveProducts[p.id]) box.append(el('div', { class: 'note' }, p.product + ' reference from the supplied images. Not yet saved to the shared database. Edit adhesive flows and Save flows to include it in shared data and backups.'));
     if (p.source) box.append(el('div', { class: 'sub', style: 'margin-bottom:12px' }, p.source));
     ['sfg', 'sa'].forEach(function (group) {
-      var rows = p[group];
+      var rows = p[group], columns = adhesiveFields(p, group, false);
       var grid = rows.length ? el('div', { class: 'scroll' }, el('table', {},
-        el('thead', {}, el('tr', {}, FLOW_FIELDS.map(function (f) { return el('th', {}, f.label); }))),
-        el('tbody', {}, rows.map(function (row) { return el('tr', {}, FLOW_FIELDS.map(function (f) { return el('td', { style: 'white-space:pre-wrap' }, f.k === 'adhesive' && row.withdrawn ? el('s', {}, row[f.k]) : (row[f.k] || '—')); })); })))) : el('div', { class: 'sub' }, 'No steps listed.');
-      box.append(section(group.toUpperCase() + ' · Process flow', grid));
+        el('thead', {}, el('tr', {}, columns.map(function (f) { return el('th', {}, f.label); }))),
+        el('tbody', {}, rows.map(function (row) { return el('tr', {}, columns.map(function (f) { return el('td', { style: 'white-space:pre-wrap' }, f.k === 'adhesive' && row.withdrawn ? el('s', {}, row[f.k]) : (row[f.k] || '—')); })); })))) : el('div', { class: 'sub' }, 'No steps listed.');
+      var content=el('div',{},grid);if(p[group+'Note'])content.append(el('div',{class:'sub',style:'margin-top:12px;white-space:pre-wrap'},p[group+'Note']));
+      box.append(section(group.toUpperCase() + (group==='sa'&&p.saLayout==='tim2'?' · TIM2 material candidates':' · Process flow'), content));
     });
     box.append(el('div', { class: 'sub' }, 'Blank conditions were not specified in the reference. Process-table curing values are retained where the vendor summary is blank. Crossed-out material requires review.'));
     return box;
@@ -699,7 +705,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       var card = el('div', { class: 'card', 'data-flow-group': group }, el('h2', {}, group.toUpperCase() + ' · Process flow'));
       draft[group].forEach(function (row, i) {
         var entry = el('div', { style: 'padding:12px 0;border-bottom:1px solid var(--border)' }, el('div', { class: 'sub' }, 'Step ' + (i + 1)),
-          el('div', { class: 'row' }, FLOW_FIELDS.map(function (f) { return textField(f.label, row, f.k, { area: f.k === 'comment' }); })));
+          el('div', { class: 'row' }, adhesiveFields(draft, group, true).map(function (f) { return textField(f.label, row, f.k, { area: f.k === 'comment' }); })));
         entry.append(el('div', { class: 'actions', style: 'margin-top:8px' },
           el('button', { disabled: i === 0, onclick: function () { var t = draft[group][i-1]; draft[group][i-1] = row; draft[group][i] = t; rerender(); } }, 'Move up'),
           el('button', { disabled: i === draft[group].length - 1, onclick: function () { var t = draft[group][i+1]; draft[group][i+1] = row; draft[group][i] = t; rerender(); } }, 'Move down'),
@@ -707,7 +713,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
           el('label', {}, el('input', { type: 'checkbox', checked: row.withdrawn, style: 'width:auto;min-height:0', onchange: function (e) { row.withdrawn = e.target.checked; rememberDraft(); } }), ' Crossed-out adhesive')));
         card.append(entry);
       });
-      card.append(el('button', { style: 'margin-top:12px', onclick: function () { draft[group].push({ step: '', machine: '', adhesive: '', curing: '', comment: '', withdrawn: false }); rerender(); } }, '+ Add ' + group.toUpperCase() + ' step'));
+      card.append(el('button', { style: 'margin-top:12px', onclick: function () { var row={ step: group==='sa'&&draft.saLayout==='tim2'?'TIM2 candidate '+(draft[group].length+1):'', machine:'', adhesive:'', curing:'', comment:'', withdrawn:false };adhesiveFields(draft,group,true).forEach(function(f){if(row[f.k]===undefined)row[f.k]='';});draft[group].push(row); rerender(); } }, '+ Add ' + group.toUpperCase() + ' step'));
       box.append(card);
     });
     var historyBox = el('div', {});
