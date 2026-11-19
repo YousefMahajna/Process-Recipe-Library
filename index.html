@@ -123,19 +123,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
-<script src="library-core.js?v=18.11.26d"></script>
-<script src="adhesives.js?v=18.11.26d"></script>
-<script src="inventory.js?v=18.11.26d"></script>
-<script src="curing.js?v=18.11.26d"></script>
-<script src="process-flow.js?v=18.11.26d"></script>
-<script src="parts-bom.js?v=18.11.26d"></script>
+<script src="library-core.js?v=19.11.26a"></script>
+<script src="adhesives.js?v=19.11.26a"></script>
+<script src="inventory.js?v=19.11.26a"></script>
+<script src="curing.js?v=19.11.26a"></script>
+<script src="process-flow.js?v=19.11.26a"></script>
+<script src="parts-bom.js?v=19.11.26a"></script>
 <script>
 (function () {
   "use strict";
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-18', letter: 'd' };
+  var APP_BUILD = { date: '2026-11-19', letter: 'a' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -578,7 +578,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       var details = el('dl', { class: 'kv', style: 'overflow-wrap:anywhere' });
       MATERIAL_FIELDS.filter(function (f) { return f.k !== 'name'; }).forEach(function (f) { details.append(el('dt', {}, f.label), el('dd', { style: 'white-space:pre-wrap' }, m[f.k] || '—')); });
       return el('div', { style: 'padding:8px 0 16px;border-bottom:1px solid var(--border)' }, el('h3', {}, m.name || 'Material'), details,
-        datasheetControl(m), m.inventoryId ? el('div', { class: 'sub', style: 'margin-top:8px' }, 'Copied from adhesive inventory · ' + (m.inventoryMode || '') + ' · Pulled ' + fmtDT(m.inventoryPulledAt) + ' · Editable saved snapshot') : null);
+        datasheetControl(m), m.inventoryId ? el('div', { class: 'sub', style: 'margin-top:8px' }, 'Copied from adhesive inventory · ' + (m.inventoryMode || '') + ' · Catalog captured ' + fmtDT(m.inventoryCapturedAt) + ' · Pulled ' + fmtDT(m.inventoryPulledAt) + ' · Editable saved snapshot') : null);
     }));
   }
   function materialEditor(draft, rerender) {
@@ -590,7 +590,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       var item = el('div', { class: 'inventory-material', style: 'padding:16px 0;border-top:1px solid var(--border)' },
         el('div', { class: 'row' }, MATERIAL_FIELDS.map(function (f) { return textField(f.label, m, f.k, { area: f.k === 'inventoryNotes' }); })),
         textField('Datasheet URL', m, 'datasheet'), el('div', { style: 'margin:8px 0' }, datasheetControl(m)),
-        m.inventoryId ? el('div', { class: 'sub' }, 'Inventory ID ' + m.inventoryId + ' · Copied ' + fmtDT(m.inventoryPulledAt) + ' · ' + (m.dsStatus || 'Saved snapshot')) : null,
+        m.inventoryId ? el('div', { class: 'sub' }, 'Inventory ID ' + m.inventoryId + ' · ' + (m.inventoryMode || '') + ' · Catalog captured ' + fmtDT(m.inventoryCapturedAt) + ' · Copied ' + fmtDT(m.inventoryPulledAt) + ' · ' + (m.dsStatus || 'Saved snapshot')) : null,
         el('div', { class: 'actions', style: 'margin-top:8px' }, el('button', { onclick: function () { chooseInventory(draft, rerender, index); } }, 'Replace from inventory'),
           el('button', { class: 'danger', onclick: function () { draft.epoxies.splice(index, 1); rerender(); } }, 'Remove material')));
       box.append(item);
@@ -598,24 +598,25 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     return box;
   }
   function chooseInventory(draft, rerender, replaceIndex) {
-    var owner = editing, catalog = null, selected = null, pending = false;
+    var owner = editing, catalog = null, selected = null, pending = false, loadVersion = 0;
     var status = el('div', { class: 'note', role: 'status' }, 'Loading live adhesive inventory…'), results = el('div', { style: 'max-height:45vh;overflow:auto' }), preview = el('div', {});
     var search = el('input', { type: 'search', placeholder: 'Search epoxy, supplier, P/N, freezer or shelf', 'aria-label': 'Search adhesive inventory', oninput: drawResults });
     var dialog = el('dialog', { 'aria-label': 'Choose adhesive from inventory', style: 'width:min(1100px,95vw);max-height:90vh;overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:20px' });
     var importFile = el('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: async function (e) {
       var file = e.target.files[0]; if (!file) return;
-      try { catalog = { rows: InventoryBridge.rows(JSON.parse(await file.text())), mode: 'Inventory JSON export', updatedAt: '', loadedAt: new Date().toISOString() }; selected = null; preview.replaceChildren(); drawResults(); }
+      try { var imported=JSON.parse(await file.text()); loadVersion++; catalog = { rows: InventoryBridge.rows(imported), mode: 'Inventory JSON export', updatedAt: '', capturedAt: imported.capturedAt || imported.exportedAt || '', loadedAt: new Date().toISOString(), snapshot: true, notice: 'Imported inventory snapshot; freshness is not verified.' }; selected = null; preview.replaceChildren(); drawResults(); }
       catch (err) { status.textContent = 'Could not load inventory export: ' + err.message; }
     } });
-    async function refresh() {
+    async function refresh(force) {
       if (pending) return;
-      status.textContent = 'Loading live adhesive inventory…';
-      try { var next = await inventoryClient.load(); if (!dialog.isConnected) return; catalog = next; selected = null; preview.replaceChildren(); drawResults(); }
-      catch (err) { status.textContent = 'Live inventory unavailable: ' + err.message + (catalog ? ' The previous list is still displayed; refresh before selecting if freshness matters.' : ' You can load an inventory JSON export.'); }
+      var version=++loadVersion;
+      if(!catalog)status.textContent = 'Loading live adhesive inventory…';
+      try { var next = await inventoryClient.load({force:!!force}); if (!dialog.isConnected || version!==loadVersion || pending) return; catalog = next; selected = null; preview.replaceChildren(); drawResults(); }
+      catch (err) { if(version!==loadVersion||!dialog.isConnected)return;if(catalog){catalog=Object.assign({},catalog,{notice:'Live inventory unavailable: '+err.message+' The dated list below is still available.'});drawResults();}else status.textContent='Live inventory unavailable: '+err.message; }
     }
     function drawResults() {
       if (!catalog) return;
-      status.textContent = catalog.mode + ' · ' + catalog.rows.length + ' materials · Source updated: ' + fmtDT(catalog.updatedAt) + ' · Read ' + fmtDT(catalog.loadedAt);
+      status.textContent = (catalog.notice ? catalog.notice + ' ' : '') + catalog.mode + ' · ' + catalog.rows.length + ' materials · ' + (catalog.updatedAt ? 'Source updated: ' + fmtDT(catalog.updatedAt) + ' · ' : '') + (catalog.snapshot ? 'Snapshot captured: ' + fmtDT(catalog.capturedAt) : 'Catalog read: ' + fmtDT(catalog.loadedAt));
       var term = search.value.trim().toLowerCase(), matches = catalog.rows.filter(function (m) { return [m.name, m.supplier, m.pn, m.nvpn, m.freezer, m.shelf].join(' ').toLowerCase().includes(term); });
       results.replaceChildren(el('div', { class: 'sub' }, matches.length + ' matches'));
       matches.slice(0, 100).forEach(function (m) { results.append(el('button', { class: 'hit', onclick: function () { if (!pending) { selected = m; drawPreview(); } } },
@@ -623,7 +624,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       if (matches.length > 100) results.append(el('div', { class: 'sub' }, 'Showing 100 matches. Narrow your search.'));
     }
     function drawPreview() {
-      var m = selected;
+      var m = selected, selectedCatalog = catalog;
       preview.replaceChildren(el('h3', {}, m.name));
       var fields = el('dl', { class: 'kv', style: 'overflow-wrap:anywhere' });
       MATERIAL_FIELDS.filter(function (f) { return !['name', 'mix'].includes(f.k); }).forEach(function (f) { fields.append(el('dt', {}, f.label), el('dd', { style: 'white-space:pre-wrap' }, m[f.k] || 'Not provided')); });
@@ -635,23 +636,23 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         pending = true; use.disabled = true; use.textContent = 'Copying material and datasheet…';
         try {
           var attachment = '';
-          try { attachment = await inventoryClient.attachment(m, catalog); }
+          try { attachment = await inventoryClient.attachment(m, selectedCatalog); }
           catch (err) { if (!dialog.isConnected || !window.confirm('The datasheet could not be copied: ' + err.message + '\nAdd material details without a copied datasheet?')) return; }
           if (editing !== owner || !dialog.isConnected) return;
-          var snapshot = InventoryBridge.material(m, catalog, attachment);
+          var snapshot = InventoryBridge.material(m, selectedCatalog, attachment);
           if (replaceIndex === undefined) draft.epoxies.push(snapshot); else draft.epoxies[replaceIndex] = snapshot;
           rememberDraft(); dialog.close(); dialog.remove(); rerender();
         } finally { pending = false; use.disabled = false; use.textContent = 'Use selected material'; }
       } }, 'Use selected material');
-      preview.append(el('div', { style: 'margin-top:12px' }, use));
+      preview.insertBefore(el('div', { style: 'margin:12px 0' }, use), preview.children[1] || null);
     }
     dialog.append(el('h2', {}, 'Adhesive inventory'), status,
-      el('div', { class: 'actions', style: 'margin-bottom:12px' }, el('button', { onclick: refresh }, 'Refresh inventory'),
+      el('div', { class: 'actions', style: 'margin-bottom:12px' }, el('button', { onclick: function(){refresh(true);} }, 'Refresh inventory'),
         el('button', { onclick: function () { if (!pending) importFile.click(); } }, 'Load inventory JSON'),
         el('a', { href: InventoryBridge.platform, target: '_blank', rel: 'noopener noreferrer' }, 'Open inventory platform'),
         el('button', { onclick: function () { dialog.close(); dialog.remove(); } }, 'Close')), importFile, search,
       el('div', { class: 'row', style: 'margin-top:12px;align-items:flex-start' }, el('div', { style: 'flex:1;min-width:240px' }, results), el('div', { style: 'flex:1;min-width:240px' }, preview)));
-    dialog.addEventListener('close', function () { dialog.remove(); }); document.body.append(dialog); dialog.showModal(); refresh();
+    dialog.addEventListener('close', function () { dialog.remove(); }); document.body.append(dialog); dialog.showModal(); catalog=inventoryClient.available();if(catalog)drawResults();refresh(false);
   }
 
   // ---------- product adhesive / curing flows ----------
