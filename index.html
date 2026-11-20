@@ -91,6 +91,10 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 .photo-edit { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .pe { border: 1px solid var(--border); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .pe img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; background: var(--surface2); }
+.equipment-item { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.equipment-item .card { border: 0; padding: 0; box-shadow: none; }
+.picture-space { border: 1px dashed var(--border); border-radius: 8px; min-height: 110px; display: grid; place-items: center; color: var(--muted); }
+.equipment-gallery { grid-template-columns: repeat(3, minmax(40px, 1fr)); min-width: 145px; max-width: 250px; }
 .lb { position: fixed; inset: 0; background: rgba(0,0,0,.88); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
 .lb-img { max-width: 100%; max-height: 80vh; display: flex; }
 .lb-img img { max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 6px; }
@@ -124,7 +128,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 </div>
 
 <script src="hub-entry.js?v=recipes-entry-2"></script>
-<script src="library-core.js?v=19.11.26a"></script>
+<script src="library-core.js?v=20.11.26b"></script>
 <script src="adhesives.js?v=19.11.26a"></script>
 <script src="inventory.js?v=19.11.26a"></script>
 <script src="curing.js?v=19.11.26a"></script>
@@ -136,7 +140,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-20', letter: 'a' };
+  var APP_BUILD = { date: '2026-11-20', letter: 'b' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -187,7 +191,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   });
   function forgetDraft() { try { localStorage.removeItem(RECOVERY_KEY); } catch (e) {} }
   function showDrafts() {
-    if (!canEdit()) return;
+    if (!requireAdmin()) return;
     var dialog = el('dialog', { style: 'max-width:700px;width:95%;background:var(--surface);color:var(--text)' }, el('h2', {}, 'Browser recovery drafts'));
     var count = 0;
     try {
@@ -223,6 +227,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     return backupChain;
   }
   async function chooseBackupFolder() {
+    if (!requireAdmin()) return;
     try {
       if (!window.showDirectoryPicker) throw new Error('Folder backups are unavailable in this browser. Use Backup to download JSON files.');
       backupDir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'recipe-library-backups' });
@@ -244,6 +249,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     });
   }
   async function restoreDeleted() {
+    if (!requireAdmin()) return;
     if (writing || busy) return;
     try {
       var snap = await store.read(), deleted = snap.data.deleted || {}, ids = Object.keys(deleted);
@@ -303,6 +309,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function normRecipe(id, r) {
     var o = Object.assign(blank(), r || {});
     ["tools", "epoxies", "jigs", "steps", "images"].forEach(function (k) { o[k] = toArr(o[k]); });
+    ['tools','jigs'].forEach(function(k){o[k]=o[k].map(function(item){return Object.assign({},item,{images:toArr(item.images)});});});
     o.cure = Object.assign({ method: "", atmosphere: "", segments: [] }, o.cure || {});
     o.cure.segments = toArr(o.cure.segments);
     if (o.cure.points !== undefined) o.cure.points = toArr(o.cure.points);
@@ -328,6 +335,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   var loaded = false, loadError = "", busy = "", toast = "", confirmDelete = false;
   try { var s0 = JSON.parse(lsGet("rl-sel") || "null"); if (s0) sel = s0; } catch (e) {}
   function canEdit() { return role === 'editor' && (!hubMode || (hubReady && hubEntry && hubEntry.role === 'editor')); }
+  function canAdmin() { return canEdit() && hubMode && hubEntry.level === 'admin'; }
+  function requireAdmin() { if (canAdmin()) return true; toast = 'Administrator access is required for this tool. Open Process Lab with your administrator email.'; render(); return false; }
   function navigatePage(mode) {
     var hash = '#' + mode;
     if (hubMode) { var params = new URLSearchParams(location.hash.slice(1)); params.set('ipl-entry','1'); params.set('email',hubEntry.email); params.set('page',mode); hash='#'+params.toString(); }
@@ -433,11 +442,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
   function preparePhotos(out, draft) {
     var photos = {};
-    out.images = draft.images.map(function (im) {
+    function prepare(list) { return (list || []).map(function (im) {
       var id = im.id;
       if (!id && im._data) { id = 'img-' + crypto.randomUUID(); photos[id] = { data: im._data }; }
       return { id: id, caption: String(im.caption || '').trim() };
-    });
+    }); }
+    out.images = prepare(draft.images);
+    ['tools','jigs'].forEach(function(k){(out[k]||[]).forEach(function(item){item.images=prepare(item.images);});});
     return photos;
   }
 
@@ -459,7 +470,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       el("button", { class: "lb-next", "aria-label": "Next photo", onclick: function () { go(1); } }, "›"));
     document.body.appendChild(overlay); document.addEventListener("keydown", onKey); lbClose = close; show(); x.focus();
   }
-  function renderPhotos(r) {
+  function renderPhotos(r, inline) {
     var list = (r.images || []).filter(function (im) { return im && im.id; });
     if (!list.length) return null;
     var g = el("div", { class: "gallery" });
@@ -468,10 +479,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         el("button", { class: "thumb", "aria-label": "Open photo: " + (im.caption || (i + 1)), onclick: function () { openLightbox(list, i); } }, imgEl(im.id, im.caption || "Process photo")),
         im.caption ? el("figcaption", {}, im.caption) : null));
     });
+    if (inline) { g.classList.add('equipment-gallery'); return g; }
     return section("Photos", g);
   }
-  function photoEditor(draft, rerender) {
-    var box = el("div", { class: "card" }, el("h2", {}, "Photos"));
+  function photoEditor(draft, rerender, options) {
+    options=options||{};var limit=options.limit||MAX_PHOTOS;
+    draft.images=toArr(draft.images);
+    var box = el("div", { class: "card", 'data-picture-owner':options.owner||'recipe' }, el("h2", {}, options.title||"Photos"));
     var status = el("div", { class: "sub", role: "status" });
     var grid = el("div", { class: "photo-edit" });
     function move(i, d) { var t = draft.images[i]; draft.images[i] = draft.images[i + d]; draft.images[i + d] = t; rerender(); }
@@ -484,26 +498,28 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
           el("button", { class: "small", "aria-label": "Move later", disabled: i === draft.images.length - 1, onclick: function () { move(i, 1); } }, "▶"),
           el("button", { class: "small danger", onclick: function () { draft.images.splice(i, 1); rerender(); } }, "Remove"))));
     });
-    if (draft.images.length) box.append(grid);
+    if(options.limit){for(var slot=draft.images.length;slot<limit;slot++)grid.append(el('div',{class:'picture-space'},'Picture '+(slot+1)));}
+    if (draft.images.length||options.limit) box.append(grid);
     var file = el("input", { type: "file", accept: "image/*", multiple: true, style: "display:none", onchange: function (e) {
       var files = Array.prototype.slice.call(e.target.files); e.target.value = "";
       if (!files.length) return;
-      if (draft.images.length + files.length > MAX_PHOTOS) { status.textContent = "Up to " + MAX_PHOTOS + " photos per recipe."; return; }
+      if (draft.images.length + files.length > limit) { status.textContent = "Up to " + limit + (options.limit ? ' pictures per individual tool or jig.' : ' photos per recipe.'); return; }
       status.textContent = 'Processing ' + files.length + ' photo(s)…';
       writing = true; lockEditor(true); renderTop();
       var chain = Promise.resolve();
       files.forEach(function (f) {
         chain = chain.then(function () { return resizeImage(f).then(function (d) { draft.images.push({ id: "", caption: "", _data: d }); }); });
       });
-      chain.then(function () { writing = false; renderTop(); rememberDraft(); rerender(); }).catch(function (err) { writing = false; backupMessage = err.message; rememberDraft(); render(); });
+      chain.then(function () { writing = false; renderTop(); rememberDraft(); rerender(); }).catch(function (err) { writing = false; toast = 'Could not process picture: ' + err.message; rememberDraft(); render(); });
     } });
-    box.append(file, el("div", { class: "actions" }, el("button", { onclick: function () { file.click(); } }, "+ Add photos"), status),
+    box.append(file, el("div", { class: "actions" }, el("button", { disabled:draft.images.length>=limit, 'aria-label':options.owner?'Add pictures for '+options.owner:'Add recipe photos', onclick: function () { file.click(); } }, options.limit?'+ Add pictures ('+draft.images.length+'/'+limit+')':"+ Add photos"), status),
       el("div", { class: "sub", style: "margin-top:8px" }, "Photos are resized and uploaded when you click Save. Removing a photo only unlinks it from the recipe."));
     return box;
   }
 
   // ---------- backup / import ----------
   async function downloadBackup() {
+    if (!requireAdmin()) return;
     if (writing || busy) return;
     busy = 'Preparing complete backup…'; render();
     try { var snap = await store.read(); downloadJSON(exportSnapshot(snap.data), 'recipe-library-backup-' + Date.now() + '.json'); }
@@ -511,6 +527,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     finally { busy = ''; render(); }
   }
   async function importData(d, askText) {
+    if (!requireAdmin()) return;
     if (writing || busy) return;
     try {
       if (!d || typeof d !== 'object') throw new Error('Invalid backup file.');
@@ -557,31 +574,31 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function setRole(v) { if (hubMode) return; if (editing && v !== 'editor' && !window.confirm('Leave the editor? The recovery draft will be kept.')) return; role = v; lsSet("rl-role", v); if (v !== "editor") { editing = null; confirmDelete = false; } render(); }
   function renderTop() {
     topActions.replaceChildren();
+    topActions.append(el('a', {id:'processLabBack',href:'https://yousefmahajna.github.io/interconnect-process-lab/'}, '← Process Lab'));
     if (hubMode) {
-      topActions.append(el('a', {id:'processLabBack',href:'https://yousefmahajna.github.io/interconnect-process-lab/'}, '← Process Lab'));
       if (!hubReady) { topActions.append(el('span', {class:'badge'}, hubError ? 'Access unavailable' : 'Checking access…')); return; }
     }
     if (writing || busy) { topActions.append(el('span', { role: 'status' }, busy || 'Saving / processing photos…')); return; }
     topActions.append(el("button", { onclick: function () { toast = ""; load(true); } }, "Refresh"));
     if (!canEdit()) {
       topActions.append(el("span", { class: "badge" }, "Viewer"));
-      if (!hubMode) topActions.append(el("button", { onclick: function () { setRole("editor"); } }, "Switch to Editor"));
       return;
     }
-    topActions.append(el("span", { class: "badge Released" }, "Editor"));
+    topActions.append(el("span", { class: "badge Released" }, canAdmin() ? "Administrator" : "Editor"));
     if (!editing && loaded) {
       if (pageMode === 'recipes') topActions.append(el("button", { class: "primary", onclick: function () {
         var d = blank(); d.product = sel.product; d.flavor = sel.flavor === 'All flavors' ? '' : sel.flavor; d.allFlavors = sel.flavor === 'All flavors';
         editing = { draft: d, oldId: null, base: "" }; render(); window.scrollTo(0, 0);
       } }, "+ New recipe"));
-      topActions.append(el('button', { onclick: downloadBackup }, 'Backup'));
-      topActions.append(el('button', { onclick: chooseBackupFolder }, backupDir ? 'Change backup folder' : 'Choose backup folder'));
-      topActions.append(el('button', { onclick: restoreDeleted }, 'Deleted recipes'));
-      topActions.append(el('button', { onclick: showDrafts }, 'Recover draft'));
-      var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
-      topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import"));
+      if (canAdmin()) {
+        topActions.append(el('button', { onclick: downloadBackup }, 'Backup'));
+        topActions.append(el('button', { onclick: chooseBackupFolder }, backupDir ? 'Change backup folder' : 'Choose backup folder'));
+        topActions.append(el('button', { onclick: restoreDeleted }, 'Deleted recipes'));
+        topActions.append(el('button', { onclick: showDrafts }, 'Recover draft'));
+        var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
+        topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import"));
+      }
     }
-    if (!hubMode) topActions.append(el("button", { onclick: function () { setRole("viewer"); } }, "Switch to Viewer"));
   }
 
   // ---------- inventory picker and saved material snapshots ----------
@@ -863,7 +880,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       } }, mode === 'recipes' ? 'Recipes' : mode === 'flow' ? 'Product flow' : mode === 'parts' ? 'Optical and mechanical parts' : 'Adhesives & curing conditions'); })));
 
     if (syncError) app.append(el('div', { class: 'note bad', role: 'alert' }, syncError));
-    app.append(el('div', { class: 'sub noprint', style: 'margin-bottom:10px' }, 'Shared database · Last sync: ' + fmtDT(lastSync) + ' · ' + (backupMessage || (backupDir ? 'Folder backup connected for this session' : 'External file backup not connected. Choose a backup folder or download Backup.'))));
+    app.append(el('div', { class: 'sub noprint', style: 'margin-bottom:10px' }, 'Shared database · Last sync: ' + fmtDT(lastSync) + (canAdmin() ? ' · ' + (backupMessage || (backupDir ? 'Folder backup connected for this session' : 'External file backup not connected. Choose a backup folder or download Backup.')) : '')));
     if (toast) app.append(el("div", { class: "note noprint" }, toast, " ", el("button", { class: "small", onclick: function () { toast = ""; render(); } }, "Dismiss")));
     if (NOT_CONFIGURED) {
       app.append(el("div", { class: "card" }, el("h2", {}, "One-time setup"),
@@ -879,7 +896,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     if (pageMode === 'adhesives') { app.append(renderAdhesives()); return; }
     if (!recipes.length) {
       app.append(el("div", { class: "card empty" }, el("div", { style: "font-size:17px;color:var(--text);margin-bottom:8px" }, "No recipes yet"),
-        canEdit() ? el("div", {}, "Use “+ New recipe”, or ", el("button", { class: "small", onclick: loadStarter }, "load the starter sample data"))
+        canEdit() ? el("div", {}, "Use “+ New recipe”", canAdmin() ? el("button", { class: "small", onclick: loadStarter }, "load the starter sample data") : null)
                   : "Switch to Editor to add the first recipe."));
       return;
     }
@@ -938,12 +955,12 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     if (!rows || !rows.length) return el("div", { class: "sub" }, "None listed.");
     return el("div", { class: "scroll" }, el("table", {},
       el("thead", {}, el("tr", {}, cols.map(function (c) { return el("th", {}, c.label); }))),
-      el("tbody", {}, rows.map(function (r) { return el("tr", {}, cols.map(function (c) { return el("td", {}, r[c.k] || "—"); })); }))));
+      el("tbody", {}, rows.map(function (r) { return el("tr", {}, cols.map(function (c) { return el("td", {}, c.render?c.render(r):r[c.k] || "—"); })); }))));
   }
-  var TOOL_COLS = [{ k: "name", label: "Tool / equipment" }, { k: "setting", label: "ID / setting" }, { k: "note", label: "Note" }];
+  var TOOL_COLS = [{ k: "name", label: "Tool / equipment" }, { k: "setting", label: "ID / setting" }, { k: "note", label: "Note" },{label:'Pictures',render:function(item){return renderPhotos(item,true)||el('span',{class:'sub'},'No pictures');}}];
   var EPOXY_COLS = [{ k: "name", label: "Material" }, { k: "pn", label: "P/N" }, { k: "supplier", label: "Supplier" },
     { k: "mix", label: "Mix / dispense" }, { k: "potLife", label: "Pot life" }, { k: "storage", label: "Storage" }];
-  var JIG_COLS = [{ k: "name", label: "Jig / fixture" }, { k: "id", label: "ID" }, { k: "note", label: "Note" }];
+  var JIG_COLS = [{ k: "name", label: "Jig / fixture" }, { k: "id", label: "ID" }, { k: "note", label: "Note" },{label:'Pictures',render:function(item){return renderPhotos(item,true)||el('span',{class:'sub'},'No pictures');}}];
 
   function renderRecipe(r) {
     var head = el("div", { class: "card" },
@@ -960,8 +977,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     if (r.status === "Obsolete") w.append(el("div", { class: "note bad" }, "This recipe is obsolete. Check with process engineering before running it."));
     if (r.status === "Draft") w.append(el("div", { class: "note" }, "Draft recipe, not yet released."));
     w.append(el("div", { class: "grid2" },
-      section("Tools & equipment", table(TOOL_COLS, r.tools)),
-      section("Jigs & fixtures", table(JIG_COLS, r.jigs))));
+      section("Tools & equipment", el('div',{style:'overflow-x:auto'},table(TOOL_COLS, r.tools))),
+      section("Jigs & fixtures", el('div',{style:'overflow-x:auto'},table(JIG_COLS, r.jigs)))));
     w.append(section("Epoxies & materials", renderMaterials(r.epoxies)));
     w.append(renderCure(r.cure, r));
     if (r.steps && r.steps.length) w.append(section("Procedure", el("ol", { class: "steps" }, r.steps.map(function (s) { return el("li", {}, s); }))));
@@ -1006,12 +1023,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     input.id = 'field-' + crypto.randomUUID();
     return el("div", { class: "field", style: opts.style }, label ? el("label", { for: input.id }, label) : null, input);
   }
-  function listEditor(title, arr, fields, rerender) {
+  function listEditor(title, arr, fields, rerender, pictures) {
     var box = el("div", { class: "card" }, el("h2", {}, title));
     arr.forEach(function (item, i) {
-      box.append(el("div", { class: "edit-row" },
+      var row=el("div", { class: "edit-row" },
         fields.map(function (f) { return textField(f.label, item, f.k, { number: f.number }); }),
-        el("button", { class: "small danger", "aria-label": "Remove row", onclick: function () { arr.splice(i, 1); rerender(); } }, "Remove")));
+        el("button", { class: "small danger", "aria-label": "Remove row", onclick: function () { arr.splice(i, 1); rerender(); } }, "Remove"));
+      box.append(pictures?el('div',{class:'equipment-item'},row,photoEditor(item,rerender,{limit:3,title:'Pictures · '+(item.name||'Item '+(i+1)),owner:title+' · '+(i+1)})):row);
     });
     box.append(el("button", { class: "small", onclick: function () { var o = {}; fields.forEach(function (f) { o[f.k] = ""; }); arr.push(o); rerender(); } }, "+ Add row"));
     return box;
@@ -1129,8 +1147,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
           textField("Recipe name", draft, "name", { style: "flex:3" }),
           textField("Revision", draft, "rev"),
           el("div", { class: "field" }, el("label", {}, "Status"), statusSel))),
-      listEditor("Tools & equipment", draft.tools, [{ k: "name", label: "Tool" }, { k: "setting", label: "ID / setting" }, { k: "note", label: "Note" }], rerender),
-      listEditor("Jigs & fixtures", draft.jigs, [{ k: "name", label: "Jig" }, { k: "id", label: "ID" }, { k: "note", label: "Note" }], rerender),
+      listEditor("Tools & equipment", draft.tools, [{ k: "name", label: "Tool" }, { k: "setting", label: "ID / setting" }, { k: "note", label: "Note" }], rerender, true),
+      listEditor("Jigs & fixtures", draft.jigs, [{ k: "name", label: "Jig" }, { k: "id", label: "ID" }, { k: "note", label: "Note" }], rerender, true),
       materialEditor(draft, rerender),
       el("div", { class: "card" }, el("h2", {}, "Curing"),
         el("div", { class: "row" }, textField("Method", draft.cure, "method", { ph: "Box oven / UV / room temp" }), textField("Atmosphere", draft.cure, "atmosphere", { ph: "Air / N2" })),
@@ -1173,3 +1191,4 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 </script>
 </body>
 </html>
+
