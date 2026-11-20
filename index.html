@@ -123,6 +123,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   <div id="app"></div>
 </div>
 
+<script src="hub-entry.js?v=recipes-entry-1"></script>
 <script src="library-core.js?v=19.11.26a"></script>
 <script src="adhesives.js?v=19.11.26a"></script>
 <script src="inventory.js?v=19.11.26a"></script>
@@ -135,7 +136,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-19', letter: 'a' };
+  var APP_BUILD = { date: '2026-11-20', letter: 'a' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -147,12 +148,26 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   var BASE = DB_URL.replace(/\/+$/, "") + "/" + ROOT + "/";
   var NOT_CONFIGURED = /YOUR-PROJECT/.test(DB_URL);
   var REFRESH_MS = 30000;
-  var pageMode = location.hash === '#parts' ? 'parts' : location.hash === '#flow' ? 'flow' : location.hash === '#adhesives' ? 'adhesives' : 'recipes';
+  var hubMode = new URLSearchParams(location.hash.slice(1)).get('ipl-entry') === '1';
+  var hubEntry = null, hubReady = !hubMode, hubError = '';
+  var hubPage = new URLSearchParams(location.hash.slice(1)).get('page');
+  var pageMode = hubMode ? (['recipes','parts','flow','adhesives'].includes(hubPage) ? hubPage : 'recipes') : location.hash === '#parts' ? 'parts' : location.hash === '#flow' ? 'flow' : location.hash === '#adhesives' ? 'adhesives' : 'recipes';
   var adhesiveProducts = {}, adhesiveProductId = 'splinter';
   var processFlows = {}, flowProductId = 'splinter', flowState = { selected: 0 };
   var partsBoms = {}, bomProductId = 'splinter', bomState = { flavor: '__all', query: '', itemId: '', optionId: '' };
   var MAX_PHOTOS = 12;
-  var core = RecipeLibrary, store = core.createStore(BASE);
+  var core = RecipeLibrary, store = core.createStore(BASE, function (url, options) {
+    if (hubMode && !hubReady) return Promise.reject(new Error('Process Lab access has not been confirmed.'));
+    if (options && options.method && options.method !== 'GET' && !canEdit()) return Promise.reject(new Error('Viewer access is read-only. No changes were sent.'));
+    return fetch(url, options);
+  });
+  Object.keys(store).filter(function (name) { return name !== 'read'; }).forEach(function (name) {
+    var operation = store[name];
+    store[name] = function () {
+      if (!canEdit()) return Promise.reject(new Error('Viewer access is read-only. No changes were sent.'));
+      return operation.apply(store, arguments);
+    };
+  });
   var writing = false, syncError = '', lastSync = '', backupDir = null, backupMessage = '';
   var backupChain = Promise.resolve();
   var DRAFT_PREFIX = 'process-recipe-library-draft-v3';
@@ -161,7 +176,8 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   catch (e) { tabId = crypto.randomUUID(); }
   var RECOVERY_KEY = DRAFT_PREFIX + '-' + tabId;
   function rememberDraft() {
-    if (!editing) return;
+    if (!editing || !canEdit()) return;
+    if (hubMode) { editing._hubEmail = hubEntry.email; editing._hubLevel = hubEntry.level; }
     try { localStorage.setItem(RECOVERY_KEY, JSON.stringify(editing)); }
     catch (e) { backupMessage = 'Browser could not keep a recovery draft. Use Download draft before leaving.'; }
   }
@@ -171,15 +187,17 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   });
   function forgetDraft() { try { localStorage.removeItem(RECOVERY_KEY); } catch (e) {} }
   function showDrafts() {
+    if (!canEdit()) return;
     var dialog = el('dialog', { style: 'max-width:700px;width:95%;background:var(--surface);color:var(--text)' }, el('h2', {}, 'Browser recovery drafts'));
     var count = 0;
     try {
       Object.keys(localStorage).filter(function (k) { return k.indexOf(DRAFT_PREFIX) === 0; }).forEach(function (k) {
         var saved;
         try { saved = JSON.parse(localStorage.getItem(k)); } catch (e) { return; }
-        if (!saved || !saved.draft) return;
+        if (!saved || !saved.draft || (hubMode && (!hubEntry || saved._hubEmail !== hubEntry.email || saved._hubLevel !== hubEntry.level))) return;
         count++;
         dialog.append(el('button', { class: 'hit', onclick: function () {
+          if (!canEdit()) return;
           editing = clone(saved); pageMode = editing.type === 'bom' ? 'parts' : editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; rememberDraft(); dialog.close(); dialog.remove(); render();
         } }, saved.draft.product + ' · ' + (saved.draft.name || 'Unnamed draft')));
       });
@@ -304,12 +322,17 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // ---------- state ----------
   var recipes = [], libUpdated = "", lastSig = "";
-  var role = lsGet("rl-role") === "editor" ? "editor" : "viewer";
+  var role = !hubMode && lsGet("rl-role") === "editor" ? "editor" : "viewer";
   var sel = { product: "", flavor: "", stage: "" };
   var query = "", editing = null;
   var loaded = false, loadError = "", busy = "", toast = "", confirmDelete = false;
   try { var s0 = JSON.parse(lsGet("rl-sel") || "null"); if (s0) sel = s0; } catch (e) {}
-  function canEdit() { return role === "editor"; }
+  function canEdit() { return role === 'editor' && (!hubMode || (hubReady && hubEntry && hubEntry.role === 'editor')); }
+  function navigatePage(mode) {
+    var hash = '#' + mode;
+    if (hubMode) { var params = new URLSearchParams(location.hash.slice(1)); params.set('ipl-entry','1'); params.set('email',hubEntry.email); params.set('page',mode); hash='#'+params.toString(); }
+    history.replaceState(null,'',location.pathname+location.search+hash);
+  }
 
   var app = document.getElementById("app");
   var topActions = document.getElementById("topActions");
@@ -352,6 +375,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
 
   function load(force) {
+    if (hubMode && !hubReady) return Promise.resolve();
     if (NOT_CONFIGURED) return Promise.resolve();
     return Promise.all([dbGet("recipes"), dbGet("meta/updatedAt"), dbGet("adhesiveProducts"), dbGet("processFlows"), dbGet("partsBoms")]).then(function (r) {
       var obj = r[0] || {};
@@ -530,13 +554,18 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
 
   // ---------- header ----------
-  function setRole(v) { if (editing && v !== 'editor' && !window.confirm('Leave the editor? The recovery draft will be kept.')) return; role = v; lsSet("rl-role", v); if (v !== "editor") { editing = null; confirmDelete = false; } render(); }
+  function setRole(v) { if (hubMode) return; if (editing && v !== 'editor' && !window.confirm('Leave the editor? The recovery draft will be kept.')) return; role = v; lsSet("rl-role", v); if (v !== "editor") { editing = null; confirmDelete = false; } render(); }
   function renderTop() {
     topActions.replaceChildren();
+    if (hubMode) {
+      topActions.append(el('a', {id:'processLabBack',href:'https://yousefmahajna.github.io/interconnect-process-lab/'}, '← Process Lab'));
+      if (!hubReady) { topActions.append(el('span', {class:'badge'}, hubError ? 'Access unavailable' : 'Checking access…')); return; }
+    }
     if (writing || busy) { topActions.append(el('span', { role: 'status' }, busy || 'Saving / processing photos…')); return; }
     topActions.append(el("button", { onclick: function () { toast = ""; load(true); } }, "Refresh"));
     if (!canEdit()) {
-      topActions.append(el("span", { class: "badge" }, "Viewer"), el("button", { onclick: function () { setRole("editor"); } }, "Switch to Editor"));
+      topActions.append(el("span", { class: "badge" }, "Viewer"));
+      if (!hubMode) topActions.append(el("button", { onclick: function () { setRole("editor"); } }, "Switch to Editor"));
       return;
     }
     topActions.append(el("span", { class: "badge Released" }, "Editor"));
@@ -552,7 +581,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       var file = el("input", { type: "file", accept: "application/json,.json", style: "display:none", onchange: function (e) { importFile(e.target.files[0]); e.target.value = ""; } });
       topActions.append(file, el("button", { onclick: function () { file.click(); } }, "Import"));
     }
-    topActions.append(el("button", { onclick: function () { setRole("viewer"); } }, "Switch to Viewer"));
+    if (!hubMode) topActions.append(el("button", { onclick: function () { setRole("viewer"); } }, "Switch to Viewer"));
   }
 
   // ---------- inventory picker and saved material snapshots ----------
@@ -763,7 +792,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       rerender:function(){if(editing)rememberDraft();render();},changed:rememberDraft,
       edit:function(){begin(flow);},create:function(){begin({id:core.uid(),product:'',steps:[]});},
       selectProduct:function(id){flowProductId=id;flowState.selected=0;render();},
-      openRecipe:function(r){sel={product:r.product,stage:r.stage,flavor:r.allFlavors?'All flavors':r.flavors[0],recipeId:r.id};query='';pageMode='recipes';history.replaceState(null,'','#recipes');render();window.scrollTo(0,0);},
+      openRecipe:function(r){sel={product:r.product,stage:r.stage,flavor:r.allFlavors?'All flavors':r.flavors[0],recipeId:r.id};query='';pageMode='recipes';navigatePage('recipes');render();window.scrollTo(0,0);},
       save:async function(error){
         if(writing)return;
         try{var out=clone(editing.draft);out.product=out.product.trim();out.updatedAt=new Date().toISOString();core.validateFlow(out);rememberDraft();writing=true;lockEditor(true);renderTop();
@@ -818,13 +847,19 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // ---------- render ----------
   function render() {
+    if (hubMode && !hubReady) {
+      renderTop(); app.replaceChildren(el('div', {class:'card',role:hubError?'alert':'status'},
+        el('h2',{},hubError?'Cannot open Recipe Library':'Checking Process Lab access'),
+        el('p',{},hubError || 'Loading your current application permission…'),
+        hubError ? el('button',{onclick:function(){location.reload();}},'Retry') : null)); return;
+    }
     renderTop(); renderRev();
     app.replaceChildren();
     app.append(el('nav', { class: 'tabs noprint', 'aria-label': 'Library pages', style: 'margin:0 0 16px' },
       ['recipes', 'adhesives', 'flow', 'parts'].map(function (mode) { return el('button', { class: pageMode === mode ? 'primary' : '', onclick: function () {
         if (writing || busy) return;
         if (editing) { if (!window.confirm('Leave this editor? A browser recovery draft will be kept.')) return; rememberDraft(); editing = null; }
-        pageMode = mode; history.replaceState(null, '', '#' + mode); render();
+        pageMode = mode; navigatePage(mode); render();
       } }, mode === 'recipes' ? 'Recipes' : mode === 'flow' ? 'Product flow' : mode === 'parts' ? 'Optical and mechanical parts' : 'Adhesives & curing conditions'); })));
 
     if (syncError) app.append(el('div', { class: 'note bad', role: 'alert' }, syncError));
@@ -1111,15 +1146,29 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   }
 
   // ---------- start ----------
+  async function start() {
+  if (hubMode) {
+    render();
+    try {
+      hubEntry=await RecipeHubEntry.load(location.href,fetch.bind(window));
+      if (hubEntry.mode!=='hub') throw new Error('Return to Process Lab and select your email again.');
+      role=hubEntry.role;hubReady=true;
+      RECOVERY_KEY += ':hub:' + hubEntry.email + ':' + hubEntry.level;
+      var identity=el('div',{id:'hubIdentity',class:'sub'},hubEntry.name+' · '+hubEntry.email+' · '+({viewer:'Viewer',editor:'Editor',manager:'Manager',admin:'Administrator'}[hubEntry.level]));
+      document.querySelector('header.top h1').parentElement.append(identity);
+    } catch(error) { hubError=error.message;role='viewer';hubReady=false;render();return; }
+  }
   try {
     var recovered = JSON.parse(lsGet(RECOVERY_KEY) || 'null');
-    if (recovered && recovered.draft) { editing = recovered; pageMode = editing.type === 'bom' ? 'parts' : editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; role = 'editor'; toast = 'Recovered your local draft. Refresh and compare before saving if another user has edited it.'; }
+    if (recovered && recovered.draft && (!hubMode || (canEdit() && recovered._hubEmail === hubEntry.email && recovered._hubLevel === hubEntry.level))) { editing = recovered; pageMode = editing.type === 'bom' ? 'parts' : editing.type === 'flow' ? 'flow' : editing.type === 'adhesives' ? 'adhesives' : 'recipes'; role = 'editor'; toast = 'Recovered your local draft. Refresh and compare before saving if another user has edited it.'; }
   } catch (e) {}
   tick(); setInterval(tick, 1000);
   render();
   load();
   setInterval(function () { if (!document.hidden && loaded && !editing && !busy) load(); }, REFRESH_MS);
   document.addEventListener("visibilitychange", function () { if (!document.hidden && loaded && !editing && !busy) load(); });
+  }
+  start();
 })();
 </script>
 </body>
