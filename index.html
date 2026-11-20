@@ -132,7 +132,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 <script src="adhesives.js?v=19.11.26a"></script>
 <script src="inventory.js?v=19.11.26a"></script>
 <script src="curing.js?v=19.11.26a"></script>
-<script src="process-flow.js?v=19.11.26a"></script>
+<script src="process-flow.js?v=21.11.26a"></script>
 <script src="parts-bom.js?v=19.11.26a"></script>
 <script>
 (function () {
@@ -140,7 +140,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 
   // Application release only: increment the letter for each release on the same date.
   // This value stays fixed when recipes are saved. Format matches Lab Practical Engineer.
-  var APP_BUILD = { date: '2026-11-20', letter: 'b' };
+  var APP_BUILD = { date: '2026-11-21', letter: 'a' };
 
   // ===================== CONFIG (edit this one line) =====================
   // Paste your Firebase Realtime Database URL here (Firebase console → Build → Realtime Database).
@@ -809,7 +809,13 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       rerender:function(){if(editing)rememberDraft();render();},changed:rememberDraft,
       edit:function(){begin(flow);},create:function(){begin({id:core.uid(),product:'',steps:[]});},
       selectProduct:function(id){flowProductId=id;flowState.selected=0;render();},
-      openRecipe:function(r){sel={product:r.product,stage:r.stage,flavor:r.allFlavors?'All flavors':r.flavors[0],recipeId:r.id};query='';pageMode='recipes';navigatePage('recipes');render();window.scrollTo(0,0);},
+      openStage:function(matches,preferredId){
+        if(!matches.length)return;
+        var r=matches.find(function(item){return item.id===preferredId;})||matches[0],flavors=uniq([].concat.apply([],matches.map(function(item){return item.allFlavors?['All flavors']:item.flavors;})));
+        sel={product:r.product,stage:r.stage,flavor:flavors.length===1?flavors[0]:'',recipeId:flavors.length===1?r.id:'',chooseFlavor:flavors.length>1};
+        query='';pageMode='recipes';navigatePage('recipes');render();window.scrollTo(0,0);
+        if(sel.chooseFlavor){var chooser=document.querySelector('[data-flavor-picker] select');if(chooser)chooser.focus();}
+      },
       save:async function(error){
         if(writing)return;
         try{var out=clone(editing.draft);out.product=out.product.trim();out.updatedAt=new Date().toISOString();core.validateFlow(out);rememberDraft();writing=true;lockEditor(true);renderTop();
@@ -850,14 +856,15 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
   function fixSelection() {
     var products = uniq(recipes.map(function (r) { return r.product; })).sort(cmp);
     if (products.indexOf(sel.product) < 0) sel.product = products[0] || '';
-    var productRecipes = recipes.filter(function (r) { return r.product === sel.product; }).sort(function (a, b) { return (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage); });
+    var productRecipes = recipes.filter(function (r) { return ProcessFlowPage.matchKey(r.product) === ProcessFlowPage.matchKey(sel.product); }).sort(function (a, b) { return (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage); });
     var stageNames = uniq(productRecipes.map(function (r) { return r.stage; }));
     if (stageNames.indexOf(sel.stage) < 0) sel.stage = stageNames[0] || '';
-    var stageRecipes = productRecipes.filter(function (r) { return r.stage === sel.stage; });
+    var stageRecipes = productRecipes.filter(function (r) { return ProcessFlowPage.matchKey(r.stage) === ProcessFlowPage.matchKey(sel.stage); });
     var flavors = uniq([].concat.apply([], stageRecipes.map(function (r) { return r.allFlavors ? [] : r.flavors; }))).sort(cmp);
     if (stageRecipes.some(function (r) { return r.allFlavors; })) flavors.push('All flavors');
-    if (flavors.indexOf(sel.flavor) < 0) sel.flavor = flavors[0] || '';
-    var matches = stageRecipes.filter(function (r) { return core.applies(r, sel.flavor); });
+    if(sel.chooseFlavor&&flavors.length<=1)sel.chooseFlavor=false;
+    if (!sel.chooseFlavor&&flavors.indexOf(sel.flavor) < 0) sel.flavor = flavors[0] || '';
+    var matches = sel.chooseFlavor?[]:stageRecipes.filter(function (r) { return core.applies(r, sel.flavor); });
     if (!matches.some(function (r) { return r.id === sel.recipeId; })) sel.recipeId = matches[0] ? matches[0].id : '';
     return { products: products, stageNames: stageNames, flavors: flavors, stages: matches };
   }
@@ -904,13 +911,15 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
     lsSet("rl-sel", JSON.stringify(sel));
     app.append(renderPicker(d));
     if (query.trim()) { app.append(renderSearch()); return; }
+    if(sel.chooseFlavor){app.append(el('div',{class:'card',role:'status'},'Choose a flavor for '+sel.product+' · '+sel.stage+' to open its recipe.'));return;}
     var cur = d.stages.filter(function (r) { return r.id === sel.recipeId; })[0];
     app.append(cur ? renderRecipe(cur) : el("div", { class: "card empty" }, "No recipe for this selection."));
   }
 
-  function selectField(label, value, options, onchange) {
+  function selectField(label, value, options, onchange, placeholder) {
     var s = el("select", { onchange: function (e) { onchange(e.target.value); } },
       options.map(function (o) { return el("option", { value: o }, o); }));
+    if(placeholder)s.prepend(el('option',{value:'',disabled:true},placeholder));
     s.value = value; s.id = 'field-' + crypto.randomUUID();
     return el("div", { class: "field" }, el("label", { for: s.id }, label), s);
   }
@@ -920,16 +929,16 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
         return el('button', { class: 'tab', role: 'tab', 'aria-selected': String(r.id === sel.recipeId), onclick: function () { sel.recipeId = r.id; render(); } }, r.name + ' (' + r.flavor + ')');
       })) : null;
     return el('div', { class: 'card noprint' },
-      el('div', { class: 'row' },
-        selectField('Product', sel.product, d.products, function (v) { sel.product = v; sel.stage = ''; sel.flavor = ''; sel.recipeId = ''; render(); }),
-        selectField('Stage', sel.stage, d.stageNames, function (v) { sel.stage = v; sel.flavor = ''; sel.recipeId = ''; render(); }),
-        selectField('Flavor', sel.flavor, d.flavors, function (v) { sel.flavor = v; sel.recipeId = ''; render(); })),
-      el('div', { class: 'field', style: 'margin-top:12px' }, el('label', { for: 'recipe-search' }, 'Search all recipes'),
+      el('div', { class: 'field', style: 'margin-bottom:16px' }, el('label', { for: 'recipe-search' }, 'Search all recipes'),
         el('input', { id: 'recipe-search', type: 'search', placeholder: 'Recipe, epoxy, jig, tool…', value: query,
           oninput: function (e) {
             query = e.target.value; var pos = e.target.selectionStart; render();
             var i = app.querySelector('input[type=search]'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (x) {} }
-          } })), query.trim() ? null : tabs);
+          } })),
+      el('div', { class: 'row' },
+        selectField('Product', sel.product, d.products, function (v) { sel.product = v; sel.stage = ''; sel.flavor = ''; sel.recipeId = '';sel.chooseFlavor=false; render(); }),
+        selectField('Stage', sel.stage, d.stageNames, function (v) { sel.stage = v; sel.flavor = ''; sel.recipeId = '';sel.chooseFlavor=false; render(); }),
+        el('div',{'data-flavor-picker':'true',style:'display:contents'},selectField('Flavor', sel.flavor, d.flavors, function (v) { sel.flavor = v; sel.recipeId = '';sel.chooseFlavor=false; render(); },sel.chooseFlavor?'Choose flavor…':null))),query.trim() ? null : tabs);
   }
 
   function haystack(r) {
@@ -944,7 +953,7 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
       .sort(function (a, b) { return cmp(a.product, b.product) || (a.stageOrder || 0) - (b.stageOrder || 0) || cmp(a.stage, b.stage) || cmp(a.flavor, b.flavor); });
     var box = el("div", { class: "card" }, el("h2", {}, hits.length + " match" + (hits.length === 1 ? "" : "es")));
     hits.forEach(function (r) {
-      box.append(el("button", { class: "hit", onclick: function () { sel.product = r.product; sel.flavor = r.allFlavors ? 'All flavors' : r.flavors[0]; sel.stage = r.stage; sel.recipeId = r.id; query = ''; render(); } },
+      box.append(el("button", { class: "hit", onclick: function () { sel.product = r.product; sel.flavor = r.allFlavors ? 'All flavors' : r.flavors[0]; sel.stage = r.stage; sel.recipeId = r.id;sel.chooseFlavor=false; query = ''; render(); } },
         el("span", {}, el("strong", {}, r.name || r.stage)), el("span", { class: "m" }, r.product + " · " + r.stage + " · " + r.flavor)));
     });
     return box;
@@ -1191,4 +1200,5 @@ img.broken { background: var(--surface2); min-height: 120px; color: var(--muted)
 </script>
 </body>
 </html>
+
 

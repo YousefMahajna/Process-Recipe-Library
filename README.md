@@ -20,3 +20,12 @@ Process Lab Administrator gets Refresh, New recipe, Backup, Choose backup folder
 Each individual tool and jig can have up to three pictures with captions. Editors upload/reorder/remove them within recipe Edit and Save; Viewers can open the saved pictures in the existing photo viewer. Existing recipe-level photos remain separate. Images use the same shared image store, save transaction, history and backups. Removing a picture unlinks it; retained recipe history and deleted-recipe recovery keep their images. Existing records need no migration. Validation rejects more than three equipment pictures and missing references before writing.
 
 Validation: 14 Node tests and mocked browser checks of the toolbar role matrix, admin-handler guards, upload/caption/fourth-picture rejection, shared save/reload/viewer display and retention of original fields/photos. No production data is modified by these checks or by the deployment.
+
+
+## Stage navigation and search (21.11.26a)
+
+Clicking a product-flow stage in view mode opens recipes from the same product and stage. Case, whitespace, underscores and hyphens are normalized for exact matching; partial names and other products are excluded. An explicit linked recipe can map a differently named flow step to that recipe's stage. Stages without a matching recipe retain their detail panel with a clear unavailable message. Editing a flow still selects the step for editing rather than navigating away.
+
+When the matching stage has multiple flavors, the Recipes page asks the user to choose a flavor before displaying its recipe; the pending selection survives a reload. Common All flavors recipes open directly when no flavor choice is needed. Existing matching-recipe tabs remain available. The global Search all recipes field is above the Product/Stage/Flavor selectors and continues to search the whole library.
+
+Validation: 17 Node tests including exact product/stage matching; mocked browser coverage of single-recipe navigation, multiple flavors, reload, missing recipes, global search position/scope and Viewer access. This release changes navigation only and does not create or modify recipes or stored flow links.
