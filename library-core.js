@@ -39,6 +39,13 @@
     ['tools', 'epoxies', 'jigs'].forEach(function (k) {
       (r[k] || []).forEach(function (v) { if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Invalid ' + k + ' row.'); });
     });
+    ['tools', 'jigs'].forEach(function (k) {
+      (r[k] || []).forEach(function (item) {
+        if (item.images !== undefined && !Array.isArray(item.images)) throw new Error(k + ' pictures must be an array.');
+        if ((item.images || []).length > 3) throw new Error('Up to 3 pictures per individual tool or jig.');
+        (item.images || []).forEach(function (im) { if (!im || !key(im.id)) throw new Error('Invalid tool or jig picture reference.'); });
+      });
+    });
     (r.steps || []).forEach(function (s) { if (typeof s !== 'string') throw new Error('Procedure steps must be text.'); });
     if ((r.images || []).length > 12) throw new Error('Up to 12 photos per recipe.');
     (r.images || []).forEach(function (im) { if (!im || !key(im.id)) throw new Error('Invalid photo reference.'); });
@@ -148,7 +155,11 @@
         data.images[id] = copy(photos[id]);
       });
     }
-    function references(data, r) { (r.images || []).forEach(function (im) { if (!data.images || !data.images[im.id]) throw new Error('Photo ' + im.id + ' is missing. Nothing was saved.'); }); }
+    function references(data, r) {
+      var all = (r.images || []).slice();
+      ['tools','jigs'].forEach(function(k){(r[k]||[]).forEach(function(item){all=all.concat(item.images||[]);});});
+      all.forEach(function (im) { if (!data.images || !data.images[im.id]) throw new Error('Photo ' + im.id + ' is missing. Nothing was saved.'); });
+    }
     async function save(recipe, expected, photos) {
       var r = clean(recipe); if (!key(r.id)) throw new Error('Invalid recipe ID.'); validate(r);
       return transact(function (data, op) {
@@ -263,3 +274,4 @@
   }
   return { token: token, uid: uid, key: key, flavors: flavors, applies: applies, flavorLabel: flavorLabel, validate: validate, clean: clean, validateProduct: validateProduct, validateFlow:validateFlow,validateBom:validateBom, createStore: createStore };
 });
+
